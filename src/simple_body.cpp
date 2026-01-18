@@ -15,17 +15,41 @@
 
 #include <yaml-cpp/yaml.h>
 
+#include <tagslam/logging.hpp>
 #include <tagslam/simple_body.hpp>
+#include <tagslam/yaml.hpp>
 #include <tagslam/yaml_utils.hpp>
 
 namespace tagslam
 {
+static rclcpp::Logger get_logger()
+{
+  return (rclcpp::get_logger("simple_body"));
+}
 
 bool SimpleBody::parse(const YAML::Node & body, const BodyPtr & bp)
 {
   if (body["tags"]) {
     TagVec tv = Tag::parseTags(body["tags"], defaultTagSize_, bp);
     addTags(tv);
+  }
+  if (body["tag_sizes"]) {
+    const auto tagSizes = body["tag_sizes"];
+    if (!tagSizes.IsSequence()) {
+      BOMB_OUT("tag_sizes must be a list!");
+    }
+    for (const auto & tagSize : tagSizes) {
+      const int id = yaml::parse<int>(tagSize, "id");
+      const int bits = yaml::parse<int>(tagSize, "bits", 6);
+      const double size = yaml::parse<double>(tagSize, "size", defaultTagSize_);
+      if (tags_.find(id) != tags_.end()) {
+        LOG_WARN(
+          "tag size entry ignored for tag " << id
+                                             << " because tag is already set");
+        continue;
+      }
+      addTag(Tag::make(id, bits, size, PoseWithNoise(), bp));
+    }
   }
   return (true);
 }
