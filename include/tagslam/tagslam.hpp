@@ -206,6 +206,7 @@ private:
   bool useFakeOdom_{false};
   bool publishAck_{false};
   bool amnesia_{false};
+  bool dropDuplicateTagsAcrossCameras_{true};
   int frameNum_{0};
   int maxFrameNum_{1000000};
   int maxHammingDistance_{100};

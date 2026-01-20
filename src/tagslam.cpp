@@ -194,6 +194,8 @@ void TagSLAM::readParams()
   fixedFrame_ = declare_parameter<string>("fixed_frame_id", "map");
   maxFrameNum_ = declare_parameter<int>("max_number_of_frames", 0);
   publishAck_ = declare_parameter<bool>("publish_ack", false);
+  dropDuplicateTagsAcrossCameras_ =
+    declare_parameter<bool>("drop_duplicate_tags_across_cameras", true);
 }
 
 static YAML::Node readConfig(
@@ -1152,24 +1154,26 @@ void TagSLAM::processTags(
   }
 
   std::unordered_map<int, TagCandidate> bestGlobal;
-  for (const auto & candidates : camCandidates) {
-    for (const auto & candidate : candidates) {
-      auto it = bestGlobal.find(candidate.tag->getId());
-      if (it == bestGlobal.end() || candidate.size > it->second.size) {
-        if (it != bestGlobal.end()) {
+  if (dropDuplicateTagsAcrossCameras_) {
+    for (const auto & candidates : camCandidates) {
+      for (const auto & candidate : candidates) {
+        auto it = bestGlobal.find(candidate.tag->getId());
+        if (it == bestGlobal.end() || candidate.size > it->second.size) {
+          if (it != bestGlobal.end()) {
+            LOG_INFO(
+              "dropping duplicate tag across cameras: "
+              << candidate.tag->getId() << " size " << it->second.size << " < "
+              << candidate.size << " (camera " << it->second.cam->getName()
+              << " -> " << candidate.cam->getName() << ")");
+          }
+          bestGlobal[candidate.tag->getId()] = candidate;
+        } else {
           LOG_INFO(
             "dropping duplicate tag across cameras: "
-            << candidate.tag->getId() << " size " << it->second.size << " < "
-            << candidate.size << " (camera " << it->second.cam->getName()
-            << " -> " << candidate.cam->getName() << ")");
+            << candidate.tag->getId() << " size " << candidate.size << " < "
+            << it->second.size << " (camera " << candidate.cam->getName()
+            << " -> " << it->second.cam->getName() << ")");
         }
-        bestGlobal[candidate.tag->getId()] = candidate;
-      } else {
-        LOG_INFO(
-          "dropping duplicate tag across cameras: "
-          << candidate.tag->getId() << " size " << candidate.size << " < "
-          << it->second.size << " (camera " << candidate.cam->getName()
-          << " -> " << it->second.cam->getName() << ")");
       }
     }
   }
@@ -1178,12 +1182,14 @@ void TagSLAM::processTags(
     const auto & cam = cameras_[i];
     bool addedPose = false;
     for (const auto & candidate : camCandidates[i]) {
-      auto it = bestGlobal.find(candidate.tag->getId());
-      if (it == bestGlobal.end()) {
-        continue;
-      }
-      if (it->second.camIdx != i) {
-        continue;
+      if (dropDuplicateTagsAcrossCameras_) {
+        auto it = bestGlobal.find(candidate.tag->getId());
+        if (it == bestGlobal.end()) {
+          continue;
+        }
+        if (it->second.camIdx != i) {
+          continue;
+        }
       }
       if (!addedPose) {
         // insert time-dependent camera pose
