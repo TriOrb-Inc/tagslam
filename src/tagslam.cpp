@@ -194,6 +194,8 @@ void TagSLAM::readParams()
   fixedFrame_ = declare_parameter<string>("fixed_frame_id", "map");
   maxFrameNum_ = declare_parameter<int>("max_number_of_frames", 0);
   publishAck_ = declare_parameter<bool>("publish_ack", false);
+  dropDuplicateTagsAcrossCameras_ =
+    declare_parameter<bool>("drop_duplicate_tags_across_cameras", true);
 }
 
 static YAML::Node readConfig(
@@ -1098,49 +1100,53 @@ void TagSLAM::processTags(
     BOMB_OUT(
       "tag msgs size mismatch: " << tagMsgs.size() << " " << cameras_.size());
   }
+  struct TagCandidate
+  {
+    size_t camIdx;
+    CameraPtr cam;
+    TagConstPtr tag;
+    const Point * corners;
+    double size;
+  };
+
   typedef std::multimap<double, VertexDesc> MMap;
   MMap sortedFactors;
+  std::vector<std::vector<TagCandidate>> camCandidates(cameras_.size());
 
   for (size_t i = 0; i < cameras_.size(); i++) {
     const auto & cam = cameras_[i];
-    const auto tags = findTags(tagMsgs[i]->detections);
-    if (!tags.empty()) {
-      // insert time-dependent camera pose
-      graph_->addPose(t, Graph::cam_name(cam->getName()), true /*camPose*/);
-      // and tie it to the time-independent camera pose
-      // with a relative prior
-      const PoseWithNoise pn(Transform::Identity(), cam->getWiggle(), true);
-      string name = Graph::cam_name(cam->getName());
-      RelativePosePriorFactorPtr fac(
-        new factor::RelativePosePrior(t, 0, pn, name));
-      VertexDesc v = fac->addToGraph(fac, graph_.get());
-      sortedFactors.insert(MMap::value_type(1e10, v));
-    }
-    std::unordered_set<int> tagsFound;
-    for (const auto & tag : tagMsgs[i]->detections) {
-      TagConstPtr tagPtr = findTag(tag.id);
+    std::unordered_map<int, TagCandidate> bestById;
+    for (const auto & detection : tagMsgs[i]->detections) {
+      TagConstPtr tagPtr = findTag(detection.id);
       if (!tagPtr) {
         continue;
       }
-      if (tagsFound.count(tag.id) == 0) {
-        const auto * corners = &(tag.corners[0]);
-        TagProjectionFactorPtr fp(new factor::TagProjection(
-          t, cam, tagPtr, corners, graphUpdater_.getPixelNoise(),
-          cam->getName() + "-" + Graph::tag_name(tagPtr->getId())));
-        auto fac = fp->addToGraph(fp, graph_.get());
-        double sz = find_size_of_tag(corners);
-        if (sz < minTagArea_) {
-          LOG_WARN(
-            "dropping tag: " << tagPtr->getId()
-                             << " due to small size: " << sz);
-          continue;
-        }
-        sortedFactors.insert(MMap::value_type(sz, fac));
-        writeTagCorners(t, cam->getIndex(), tagPtr, corners);
-        tagsFound.insert(tag.id);
-      } else {
-        LOG_ERROR("dropping DUPLICATE TAG: " << tag.id);
+      const auto * corners = &(detection.corners[0]);
+      const double sz = find_size_of_tag(corners);
+      if (sz < minTagArea_) {
+        LOG_WARN(
+          "dropping tag: " << tagPtr->getId() << " due to small size: " << sz);
+        continue;
       }
+      auto it = bestById.find(detection.id);
+      if (it == bestById.end() || sz > it->second.size) {
+        if (it != bestById.end()) {
+          LOG_INFO(
+            "dropping duplicate tag in camera " << cam->getName()
+                                                << ": " << detection.id
+                                                << " size " << it->second.size
+                                                << " < " << sz);
+        }
+        bestById[detection.id] = TagCandidate{i, cam, tagPtr, corners, sz};
+      } else {
+        LOG_INFO(
+          "dropping duplicate tag in camera " << cam->getName() << ": "
+                                              << detection.id << " size " << sz
+                                              << " < " << it->second.size);
+      }
+    }
+    for (const auto & kv : bestById) {
+      camCandidates[i].push_back(kv.second);
     }
     std::stringstream ss;
     for (const auto & tag : tagMsgs[i]->detections) {
@@ -1149,6 +1155,66 @@ void TagSLAM::processTags(
     LOG_INFO(
       "frame " << frameNum_ << " [" << t << "] cam: " << cam->getName()
                << " sees tags: " << ss.str());
+  }
+
+  std::unordered_map<int, TagCandidate> bestGlobal;
+  if (dropDuplicateTagsAcrossCameras_) {
+    for (const auto & candidates : camCandidates) {
+      for (const auto & candidate : candidates) {
+        auto it = bestGlobal.find(candidate.tag->getId());
+        if (it == bestGlobal.end() || candidate.size > it->second.size) {
+          if (it != bestGlobal.end()) {
+            LOG_INFO(
+              "dropping duplicate tag across cameras: "
+              << candidate.tag->getId() << " size " << it->second.size << " < "
+              << candidate.size << " (camera " << it->second.cam->getName()
+              << " -> " << candidate.cam->getName() << ")");
+          }
+          bestGlobal[candidate.tag->getId()] = candidate;
+        } else {
+          LOG_INFO(
+            "dropping duplicate tag across cameras: "
+            << candidate.tag->getId() << " size " << candidate.size << " < "
+            << it->second.size << " (camera " << candidate.cam->getName()
+            << " -> " << it->second.cam->getName() << ")");
+        }
+      }
+    }
+  }
+
+  for (size_t i = 0; i < cameras_.size(); i++) {
+    const auto & cam = cameras_[i];
+    bool addedPose = false;
+    for (const auto & candidate : camCandidates[i]) {
+      if (dropDuplicateTagsAcrossCameras_) {
+        auto it = bestGlobal.find(candidate.tag->getId());
+        if (it == bestGlobal.end()) {
+          continue;
+        }
+        if (it->second.camIdx != i) {
+          continue;
+        }
+      }
+      if (!addedPose) {
+        // insert time-dependent camera pose
+        graph_->addPose(t, Graph::cam_name(cam->getName()), true /*camPose*/);
+        // and tie it to the time-independent camera pose
+        // with a relative prior
+        const PoseWithNoise pn(Transform::Identity(), cam->getWiggle(), true);
+        string name = Graph::cam_name(cam->getName());
+        RelativePosePriorFactorPtr fac(
+          new factor::RelativePosePrior(t, 0, pn, name));
+        VertexDesc v = fac->addToGraph(fac, graph_.get());
+        sortedFactors.insert(MMap::value_type(1e10, v));
+        addedPose = true;
+      }
+      TagProjectionFactorPtr fp(new factor::TagProjection(
+        t, cam, candidate.tag, candidate.corners, graphUpdater_.getPixelNoise(),
+        cam->getName() + "-" + Graph::tag_name(candidate.tag->getId())));
+      auto fac = fp->addToGraph(fp, graph_.get());
+      sortedFactors.insert(MMap::value_type(candidate.size, fac));
+      writeTagCorners(t, cam->getIndex(), candidate.tag, candidate.corners);
+    }
   }
   for (auto it = sortedFactors.rbegin(); it != sortedFactors.rend(); ++it) {
     factors->push_back(it->second);
