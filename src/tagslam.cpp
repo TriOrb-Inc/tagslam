@@ -877,6 +877,10 @@ void TagSLAM::fakeOdom(uint64_t tCurr, std::vector<VertexDesc> * factors)
         const PoseWithNoise pwn(Transform::Identity(), pn, true);
         factors->push_back(OdometryProcessor::add_body_pose_delta(
           graph_.get(), tPrev, tCurr, body, pwn));
+        if (OdometryProcessor::hasGroundConstraint(body)) {
+          factors->push_back(OdometryProcessor::add_body_ground_constraint(
+            graph_.get(), tPrev, tCurr, body));
+        }
       }
     }
   }
