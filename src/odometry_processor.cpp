@@ -189,22 +189,23 @@ void OdometryProcessor::process(
 
 VertexDesc OdometryProcessor::add_body_pose_delta_with_name(
   Graph * graph, uint64_t tPrev, uint64_t tCurr, const BodyConstPtr & body,
-  const PoseWithNoise & deltaPose, const std::string & factorName)
+  const PoseWithNoise & deltaPose, const std::string & poseName,
+  const std::string & factorName)
 {
   Transform prevPose;
-  const std::string name = Graph::body_name(body->getName());
-  const VertexDesc pp = graph->findPose(tPrev, name);
-  const VertexDesc cp = graph->findPose(tCurr, name);
+  const VertexDesc pp = graph->findPose(tPrev, poseName);
+  const VertexDesc cp = graph->findPose(tCurr, poseName);
   if (!Graph::is_valid(pp)) {
-    LOG_DEBUG("adding previous pose for " << name << " " << tPrev);
-    graph->addPose(tPrev, name, false);
+    LOG_DEBUG("adding previous pose for " << poseName << " " << tPrev);
+    graph->addPose(tPrev, poseName, false);
   }
   if (!Graph::is_valid(cp)) {
-    LOG_DEBUG("adding current pose for " << name << " " << tCurr);
-    graph->addPose(tCurr, name, false);
+    LOG_DEBUG("adding current pose for " << poseName << " " << tCurr);
+    graph->addPose(tCurr, poseName, false);
   }
   RelativePosePriorFactorPtr fac(
-    new factor::RelativePosePrior(tCurr, tPrev, deltaPose, factorName));
+    new factor::RelativePosePrior(
+      tCurr, tPrev, deltaPose, factorName, poseName));
   return (fac->addToGraph(fac, graph));
 }
 
@@ -212,17 +213,19 @@ VertexDesc OdometryProcessor::add_body_pose_delta(
   Graph * graph, uint64_t tPrev, uint64_t tCurr, const BodyConstPtr & body,
   const PoseWithNoise & deltaPose)
 {
+  const std::string poseName = Graph::body_name(body->getName());
   return (add_body_pose_delta_with_name(
-    graph, tPrev, tCurr, body, deltaPose, body->getName()));
+    graph, tPrev, tCurr, body, deltaPose, poseName, poseName));
 }
 
 VertexDesc OdometryProcessor::add_body_ground_constraint(
   Graph * graph, uint64_t tPrev, uint64_t tCurr, const BodyConstPtr & body)
 {
   const PoseWithNoise pwn = make_ground_constraint_pose(body);
-  const std::string factorName = body->getName() + "_ground_constraint";
+  const std::string poseName = Graph::body_name(body->getName());
+  const std::string factorName = poseName + "_ground_constraint";
   return (add_body_pose_delta_with_name(
-    graph, tPrev, tCurr, body, pwn, factorName));
+    graph, tPrev, tCurr, body, pwn, poseName, factorName));
 }
 
 }  // namespace tagslam
