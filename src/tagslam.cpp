@@ -106,6 +106,33 @@ static TransformStamped to_tftf(
   return (tsm);
 }
 
+static std::string normalize_prefix(const std::string & prefix)
+{
+  if (prefix.empty()) {
+    return "";
+  }
+  std::string p = prefix;
+  while (!p.empty() && p.front() == '/') {
+    p.erase(p.begin());
+  }
+  if (!p.empty() && p.back() != '/') {
+    p.push_back('/');
+  }
+  return p;
+}
+
+static std::string apply_prefix(
+  const std::string & prefix, const std::string & frame_id)
+{
+  if (prefix.empty() || frame_id.empty()) {
+    return frame_id;
+  }
+  if (frame_id.rfind(prefix, 0) == 0) {
+    return frame_id;
+  }
+  return prefix + frame_id;
+}
+
 static void write_time(std::ostream & o, uint64_t t)
 {
   o << (t / 1000000000ULL) << "." << std::setfill('0') << setw(9)
@@ -196,6 +223,8 @@ void TagSLAM::readParams()
   publishAck_ = declare_parameter<bool>("publish_ack", false);
   dropDuplicateTagsAcrossCameras_ =
     declare_parameter<bool>("drop_duplicate_tags_across_cameras", true);
+  std::string prefix = std::string(getenv("ROS_PREFIX") ? getenv("ROS_PREFIX") : "");
+  framePrefix_ = normalize_prefix(prefix);
 }
 
 static YAML::Node readConfig(
@@ -606,9 +635,9 @@ void TagSLAM::publishCameraTransforms(const uint64_t t, TFMessage * tfMsg)
   for (const auto & cam : cameras_) {
     Transform camTF;
     if (graph_utils::get_optimized_pose(*graph_, *cam, &camTF)) {
-      const string & rigFrameId = cam->getRig()->getFrameId();
-      const auto ctf =
-        to_tftf(rosTime(t), camTF, rigFrameId, cam->getFrameId());
+      const string rigFrameId = apply_prefix(framePrefix_, cam->getRig()->getFrameId());
+      const string camFrameId = apply_prefix(framePrefix_, cam->getFrameId());
+      const auto ctf = to_tftf(rosTime(t), camTF, rigFrameId, camFrameId);
       if (!writeToBag_) {
         tfBroadcaster_->sendTransform(ctf);
       }
@@ -622,7 +651,7 @@ void TagSLAM::publishTagAndBodyTransforms(uint64_t t, TFMessage * tfMsg)
   TransformStamped tfm;
   for (const auto & body : bodies_) {
     Transform bodyTF;
-    const string & bodyFrameId = body->getFrameId();
+    const string bodyFrameId = apply_prefix(framePrefix_, body->getFrameId());
     const uint64_t ts = body->isStatic() ? 0 : t;
     if (graph_utils::get_optimized_pose(*graph_, ts, *body, &bodyTF)) {
       const auto btf = to_tftf(rosTime(t), bodyTF, fixedFrame_, bodyFrameId);
@@ -633,7 +662,7 @@ void TagSLAM::publishTagAndBodyTransforms(uint64_t t, TFMessage * tfMsg)
       for (const auto & tag : body->getTags()) {
         Transform tagTF;
         if (graph_utils::get_optimized_pose(*graph_, *tag, &tagTF)) {
-          const std::string frameId = "tag_" + std::to_string(tag->getId());
+          const std::string frameId = apply_prefix(framePrefix_, "tag_" + std::to_string(tag->getId()));
           const auto ttf = to_tftf(rosTime(t), tagTF, bodyFrameId, frameId);
           if (!writeToBag_) {
             tfBroadcaster_->sendTransform(ttf);
@@ -652,11 +681,11 @@ void TagSLAM::publishOriginalTagTransforms(const uint64_t t, TFMessage * tfMsg)
     if (!body->getPoseWithNoise().isValid()) {
       continue;
     }
-    const string & bodyFrameId = body->getFrameId();
+    const string bodyFrameId = apply_prefix(framePrefix_, body->getFrameId());
     for (const auto & tag : body->getTags()) {
       if (tag->getPoseWithNoise().isValid()) {
         const Transform tagTF = tag->getPoseWithNoise().getPose();
-        const std::string frameId = "o_tag_" + std::to_string(tag->getId());
+        const std::string frameId = apply_prefix(framePrefix_, "o_tag_" + std::to_string(tag->getId()));
         const auto ttf = to_tftf(rosTime(t), tagTF, bodyFrameId, frameId);
         if (!writeToBag_) {
           tfBroadcaster_->sendTransform(ttf);
@@ -720,7 +749,7 @@ void TagSLAM::publishBodyOdom(const uint64_t t)
     }
     if (pwn.isValid()) {
       auto msg =
-        make_odom(rosTime(t), fixedFrame_, body->getOdomFrameId(), pwn);
+        make_odom(rosTime(t), fixedFrame_, apply_prefix(framePrefix_, body->getOdomFrameId()), pwn);
       if (writeToBag_) {
         outputBag_->write<Odometry>(
           msg, "/tagslam/odom/body_" + body->getName(), rosTime(t));
@@ -728,7 +757,7 @@ void TagSLAM::publishBodyOdom(const uint64_t t)
         odomPub_[body_idx]->publish(msg);
         PoseStamped pose_msg;
         pose_msg.header.stamp = rosTime(t);
-        pose_msg.header.frame_id = body->getOdomFrameId();
+        pose_msg.header.frame_id = apply_prefix(framePrefix_, body->getOdomFrameId());
         pose_msg.pose = msg.pose.pose;
 
         trajectory_[body_idx].header.stamp = rosTime(t);
