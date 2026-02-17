@@ -19,7 +19,8 @@ project(tagslam)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # add_compile_options(-Wall -Wextra -Wpedantic -Werror)
-add_compile_options(-Wall -Wextra -Wpedantic -Wno-class-memaccess)
+# add_compile_options(-Wall -Wextra -Wpedantic -Wno-class-memaccess)
+add_compile_options(-Wall)
 
 # find dependencies
 find_package(ament_cmake REQUIRED)
@@ -72,6 +73,27 @@ endforeach()
 
 if(${cv_bridge_VERSION} GREATER "3.3.0")
   add_definitions(-DUSE_CV_BRIDGE_HPP)
+endif()
+
+# Optional LEAG detector support
+find_path(
+  LEAG_INCLUDE_DIR
+  NAMES LentiMarkTracker.h
+  PATHS /usr/local/include/leag
+  NO_DEFAULT_PATH)
+find_library(
+  LEAG_LIBRARY
+  NAMES LentiMarkTracker
+  # PATHS /usr/local/lib/leag
+  PATHS /usr/local/lib/leag/libLentiMarkTracker.so
+  NO_DEFAULT_PATH)
+
+if(LEAG_INCLUDE_DIR AND LEAG_LIBRARY)
+  set(HAVE_LEAG_DETECTOR ON)
+  message(STATUS "LEAG detector enabled: ${LEAG_INCLUDE_DIR}, ${LEAG_LIBRARY}")
+else()
+  set(HAVE_LEAG_DETECTOR OFF)
+  message(STATUS "LEAG detector disabled: /usr/local/include/leag or /usr/local/lib/leag/libLentiMarkTracker.so not found")
 endif()
 
 #
@@ -146,6 +168,14 @@ target_compile_features(${PROJECT_NAME}_node PRIVATE cxx_std_17)
 add_library(sync_and_detect SHARED
   src/sync_and_detect.cpp
 )
+
+if(HAVE_LEAG_DETECTOR)
+  target_sources(sync_and_detect PRIVATE src/leag_detector.cpp)
+  target_compile_definitions(sync_and_detect PRIVATE USE_LEAG_DETECTOR)
+  target_include_directories(sync_and_detect PRIVATE ${LEAG_INCLUDE_DIR})
+  target_link_libraries(sync_and_detect ${LEAG_LIBRARY})
+endif()
+
 ament_target_dependencies(sync_and_detect ${sync_and_detect_ament_dependencies})
 target_link_libraries(sync_and_detect yaml-cpp)
 target_compile_features(sync_and_detect PRIVATE cxx_std_17)

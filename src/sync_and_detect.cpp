@@ -70,6 +70,17 @@ SyncAndDetect::SyncAndDetect(const rclcpp::NodeOptions & opt)
     listener_ = pub_;
   }
   subscribe(image_topics_, odom_topics_, detector_names_);
+
+#ifdef USE_LEAG_DETECTOR
+  detect_leags_ = declare_parameter<bool>("detect_leags", false);
+  svec leag_camera_topics;
+  leag_camera_topics.reserve(image_topics_.size());
+  for (const auto & image_topic : image_topics_) {
+    leag_camera_topics.push_back(image_topic.first);
+  }
+  leag_detectors_ = new LeagDetectors(leag_camera_topics);
+#endif
+
 }
 
 SyncAndDetect::~SyncAndDetect()
@@ -84,6 +95,10 @@ SyncAndDetect::~SyncAndDetect()
     detector_loader_.unloadLibraryForClass(
       "apriltag_detector_" + type + "::Detector");
   }
+#ifdef USE_LEAG_DETECTOR
+  delete leag_detectors_;
+  leag_detectors_ = nullptr;
+#endif
 }
 
 void SyncAndDetect::setListener(
@@ -253,7 +268,17 @@ size_t SyncAndDetect::tagsFromImages(
       BOMB_OUT("cannot convert image to mono!");
     }
     detectors_[i]->detect(cvImg->image, tags.get());
-    num_tags += tags->detections.size();
+    auto detected_tags = tags->detections.size();
+
+#ifdef USE_LEAG_DETECTOR
+    if(detect_leags_ && detected_tags > 0){ 
+        if( !leag_detectors_->detect_marker(cvImg->image, tags, i) ){
+          tags->detections.clear();
+        }
+        detected_tags = tags->detections.size();
+    }
+#endif
+    num_tags += detected_tags;
   }
   return (num_tags);
 }

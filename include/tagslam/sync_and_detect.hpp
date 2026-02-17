@@ -16,6 +16,10 @@
 #ifndef TAGSLAM__SYNC_AND_DETECT_HPP_
 #define TAGSLAM__SYNC_AND_DETECT_HPP_
 
+#ifdef USE_LEAG_DETECTOR
+  #include "leag_detector.hpp"
+#endif
+
 #include <yaml-cpp/yaml.h>
 
 #include <apriltag_detector/detector.hpp>
@@ -161,6 +165,12 @@ private:
   std::shared_ptr<ImageAndOdomExactSync> image_odom_exact_sync_;
   std::shared_ptr<ImageApproxSync> image_approx_sync_;
   std::shared_ptr<ImageAndOdomApproxSync> image_odom_approx_sync_;
+
+#ifdef USE_LEAG_DETECTOR
+  bool detect_leags_{false};
+  LeagDetectors* leag_detectors_{nullptr};
+#endif
+
 };
 
 }  // namespace tagslam
