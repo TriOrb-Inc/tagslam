@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <string>
 #include <vector>
+#include <memory>
 
 #include <sensor_msgs/msg/image.hpp>
 #include <apriltag_msgs/msg/april_tag_detection_array.hpp>
@@ -26,7 +27,7 @@ public:
     bool detect_marker(const cv::Mat &img, ApriltagArray::SharedPtr tags, uint8_t camera_index);
 
 private:
-    std::vector<leag::LentiMarkTracker> LMT_list_;
+    std::vector<std::unique_ptr<leag::LentiMarkTracker>> LMT_list_;
 
 };
 

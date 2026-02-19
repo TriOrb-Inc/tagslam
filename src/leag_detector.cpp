@@ -98,7 +98,7 @@ LeagDetectors::LeagDetectors(std::vector<std::string> camera_topics)
   }
 
   for (const auto & cam : camera_topics) {
-    leag::LentiMarkTracker lmt;
+    auto lmt = std::make_unique<leag::LentiMarkTracker>();
     cv::Size2i img_size;
     cv::Mat camera_matrix;
     cv::Mat dist_coeffs;
@@ -109,12 +109,12 @@ LeagDetectors::LeagDetectors(std::vector<std::string> camera_topics)
       std::cerr << "Failed to assign camera params for topic: " << cam << std::endl;
     }
 
-    const int res1 = lmt.setCamParams(img_size, camera_matrix, dist_coeffs);
-    const int res2 = lmt.setMarkerParams(str_mkfile);
+    const int res1 = lmt->setCamParams(img_size, camera_matrix, dist_coeffs);
+    const int res2 = lmt->setMarkerParams(str_mkfile);
     std::cout << "cam topic: " << cam
               << " setCamParams=" << res1
               << " setMarkerParams=" << res2 << std::endl;
-    LMT_list_.push_back(lmt);
+    LMT_list_.push_back(std::move(lmt));
   }
 }
 
@@ -138,13 +138,13 @@ bool LeagDetectors::detect_marker(const cv::Mat & img, ApriltagArray::SharedPtr 
   }
   reverseCornerOrderInPlace(tagslam_corners);
   int res;
-  if ((res = LMT_list_[camera_index].detect_nonAR(img, ids, tagslam_corners)) < 0) {
+  if ((res = LMT_list_[camera_index]->detect_nonAR(img, ids, tagslam_corners)) < 0) {
     std::cerr << "LEAG detect error for camera index " << camera_index << ": " << res << std::endl;
     return false;
   }
 
   std::vector<leag::LentiMarkTracker::ResultData> m_data;
-  int candidateNum = LMT_list_[camera_index].getResult(m_data);
+  int candidateNum = LMT_list_[camera_index]->getResult(m_data);
   if (candidateNum < 0) {
     return false;
   }
@@ -153,8 +153,8 @@ bool LeagDetectors::detect_marker(const cv::Mat & img, ApriltagArray::SharedPtr 
   std::vector<int> ids_cen;
   std::vector<std::vector<cv::Point2f>> leag_corners;
   std::vector<cv::Point2f> centers;
-  candidateNum = LMT_list_[camera_index].getResultPKGData(ids_cor, leag_corners);
-  candidateNum = LMT_list_[camera_index].getResultPKGCenterData(ids_cen, centers);
+  candidateNum = LMT_list_[camera_index]->getResultPKGData(ids_cor, leag_corners);
+  candidateNum = LMT_list_[camera_index]->getResultPKGCenterData(ids_cen, centers);
   if (candidateNum < 0) {
     return false;
   }
