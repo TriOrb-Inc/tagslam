@@ -1,5 +1,5 @@
 #ifndef TAGSLAM__LEAG_DETECTOR_HPP_
-#define TAGSLAM__LEAG_DETECTOR_HPP__
+#define TAGSLAM__LEAG_DETECTOR_HPP_
 
 #include "LentiMarkTracker.h"
 
@@ -9,6 +9,10 @@
 #include <opencv2/opencv.hpp>
 #include <cv_bridge/cv_bridge.h>
 #include <cassert>
+#include <yaml-cpp/yaml.h>
+#include <algorithm>
+#include <string>
+#include <vector>
 
 #include <sensor_msgs/msg/image.hpp>
 #include <apriltag_msgs/msg/april_tag_detection_array.hpp>

@@ -1,12 +1,5 @@
 #include <tagslam/leag_detector.hpp>
 
-#include <yaml-cpp/yaml.h>
-
-#include <algorithm>
-#include <iostream>
-#include <string>
-#include <vector>
-
 namespace
 {
 std::string normalizeTopic(const std::string & topic)

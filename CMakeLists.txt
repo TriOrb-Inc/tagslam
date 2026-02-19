@@ -21,6 +21,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # add_compile_options(-Wall -Wextra -Wpedantic -Werror)
 # add_compile_options(-Wall -Wextra -Wpedantic -Wno-class-memaccess)
 add_compile_options(-Wall)
+add_compile_options(-D _CODE)
 
 # find dependencies
 find_package(ament_cmake REQUIRED)
@@ -84,8 +85,7 @@ find_path(
 find_library(
   LEAG_LIBRARY
   NAMES LentiMarkTracker
-  # PATHS /usr/local/lib/leag
-  PATHS /usr/local/lib/leag/libLentiMarkTracker.so
+  PATHS /usr/local/lib/leag
   NO_DEFAULT_PATH)
 
 if(LEAG_INCLUDE_DIR AND LEAG_LIBRARY)
@@ -170,10 +170,11 @@ add_library(sync_and_detect SHARED
 )
 
 if(HAVE_LEAG_DETECTOR)
+  link_directories(/usr/local/lib/leag)
   target_sources(sync_and_detect PRIVATE src/leag_detector.cpp)
   target_compile_definitions(sync_and_detect PRIVATE USE_LEAG_DETECTOR)
   target_include_directories(sync_and_detect PRIVATE ${LEAG_INCLUDE_DIR})
-  target_link_libraries(sync_and_detect ${LEAG_LIBRARY})
+  target_link_libraries(sync_and_detect ${LEAG_LIBRARY} /usr/local/lib/leag/libLentiMarkTracker.so)
 endif()
 
 ament_target_dependencies(sync_and_detect ${sync_and_detect_ament_dependencies})

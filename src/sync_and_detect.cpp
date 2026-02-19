@@ -72,6 +72,7 @@ SyncAndDetect::SyncAndDetect(const rclcpp::NodeOptions & opt)
   subscribe(image_topics_, odom_topics_, detector_names_);
 
 #ifdef USE_LEAG_DETECTOR
+  puts("using LEAG detector");
   detect_leags_ = declare_parameter<bool>("detect_leags", false);
   svec leag_camera_topics;
   leag_camera_topics.reserve(image_topics_.size());
@@ -79,6 +80,7 @@ SyncAndDetect::SyncAndDetect(const rclcpp::NodeOptions & opt)
     leag_camera_topics.push_back(image_topic.first);
   }
   leag_detectors_ = new LeagDetectors(leag_camera_topics);
+  puts("initialized LEAG detectors");
 #endif
 
 }
