@@ -171,7 +171,6 @@ add_library(sync_and_detect SHARED
 
 if(HAVE_LEAG_DETECTOR)
   link_directories(/usr/local/lib/leag)
-  target_sources(sync_and_detect PRIVATE src/leag_detector.cpp)
   target_compile_definitions(sync_and_detect PRIVATE USE_LEAG_DETECTOR)
   target_include_directories(sync_and_detect PRIVATE ${LEAG_INCLUDE_DIR})
   target_link_libraries(sync_and_detect ${LEAG_LIBRARY} /usr/local/lib/leag/libLentiMarkTracker.so)
