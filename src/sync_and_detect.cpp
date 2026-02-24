@@ -14,11 +14,18 @@
 // limitations under the License.
 
 #include <algorithm>
-#ifdef USE_CV_BRIDGE_HPP
-#include <cv_bridge/cv_bridge.hpp>
+// #undef USE_LEAG_DETECTOR
+#ifndef USE_LEAG_DETECTOR
+  #ifdef USE_CV_BRIDGE_HPP
+  #include <cv_bridge/cv_bridge.hpp>
+  #else
+  #include <cv_bridge/cv_bridge.h>
+  #endif
 #else
-#include <cv_bridge/cv_bridge.h>
+  #include "tagslam/leag_wrapper.hpp"
+  tagslam::leagwrap::Tracker* leag_tracker_ = nullptr;
 #endif
+
 #include <tagslam/logging.hpp>
 #include <tagslam/sync_and_detect.hpp>
 
@@ -28,86 +35,25 @@ using std::string;
 using std::placeholders::_1;
 using std::placeholders::_2;
 
-std::string normalizeTopic(const std::string & topic)
+static const cv::Mat wrap_mono8(const sensor_msgs::msg::Image & img)
 {
-  if (topic.empty()) {
-    return topic;
+  // encodingチェック（必要なら厳密化）
+  if (img.encoding != "mono8") {
+    throw std::runtime_error("expected mono8 but got: " + img.encoding);
   }
-  if (topic.front() == '/') {
-    return topic.substr(1);
-  }
-  return topic;
-}
-
-bool fillCameraParamsFromTagslamCameras(
-  const YAML::Node & root, const std::string & camera_topic,
-  cv::Size2i * img_size, cv::Mat * camera_matrix, cv::Mat * dist_coeffs)
-{
-  if (!root || !root.IsMap()) {
-    std::cerr << "cameras.yaml root is not a map." << std::endl;
-    return false;
+  // stepチェック（mono8なら step==width が典型だが、strideありも許容）
+  if (img.step < img.width) {
+    throw std::runtime_error("invalid step");
   }
 
-  const std::string normalized_topic = normalizeTopic(camera_topic);
-  for (const auto & entry : root) {
-    const auto camera = entry.second;
-    if (!camera["image_topic"] || !camera["intrinsics"] ||
-      !camera["distortion_coeffs"] || !camera["resolution"])
-    {
-      continue;
-    }
-
-    const std::string yaml_topic =
-      normalizeTopic(camera["image_topic"].as<std::string>());
-    if (yaml_topic != normalized_topic) {
-      continue;
-    }
-
-    const auto intrinsics = camera["intrinsics"];
-    const auto distortion = camera["distortion_coeffs"];
-    const auto resolution = camera["resolution"];
-    if (!intrinsics.IsSequence() || intrinsics.size() < 4 ||
-      !distortion.IsSequence() || distortion.size() < 4 ||
-      !resolution.IsSequence() || resolution.size() < 2)
-    {
-      std::cerr << "Invalid camera calibration format for topic: "
-                << camera_topic << std::endl;
-      return false;
-    }
-
-    const double fx = intrinsics[0].as<double>();
-    const double fy = intrinsics[1].as<double>();
-    const double cx = intrinsics[2].as<double>();
-    const double cy = intrinsics[3].as<double>();
-
-    const double k1 = distortion[0].as<double>();
-    const double k2 = distortion[1].as<double>();
-    const double k3 = distortion[2].as<double>();
-    const double k4 = distortion[3].as<double>();
-
-    const int cols = resolution[0].as<int>();
-    const int rows = resolution[1].as<int>();
-
-    *img_size = cv::Size2i(cols, rows);
-    *camera_matrix = (cv::Mat_<double>(3, 3) <<
-      fx, 0.0, cx,
-      0.0, fy, cy,
-      0.0, 0.0, 1.0);
-    *dist_coeffs = (cv::Mat_<double>(4, 1) << k1, k2, k3, k4);
-    return true;
-  }
-
-  std::cerr << "No camera entry found in cameras.yaml for topic: "
-            << camera_topic << std::endl;
-  return false;
-}
-
-void reverseCornerOrderInPlace(std::vector<std::vector<cv::Point2f>> & corners)
-{
-  for (auto & corner : corners) {
-    assert(corner.size() == 4);
-    std::reverse(corner.begin(), corner.end());
-  }
+  // data をコピーせず Mat にラップ
+  return cv::Mat(
+    static_cast<int>(img.height),
+    static_cast<int>(img.width),
+    CV_8UC1,
+    const_cast<unsigned char *>(img.data.data()),
+    static_cast<size_t>(img.step)
+  );
 }
 
 Publisher::Publisher(
@@ -154,15 +100,18 @@ SyncAndDetect::SyncAndDetect(const rclcpp::NodeOptions & opt)
   subscribe(image_topics_, odom_topics_, detector_names_);
 
 #ifdef USE_LEAG_DETECTOR
-  puts("using LEAG detector");
   detect_leags_ = declare_parameter<bool>("detect_leags", false);
-  svec leag_camera_topics;
-  leag_camera_topics.reserve(image_topics_.size());
-  for (const auto & image_topic : image_topics_) {
-    leag_camera_topics.push_back(image_topic.first);
+  printf("using LEAG detector %d\n", detect_leags_);
+  if(detect_leags_){
+    leag_tracker_ = new tagslam::leagwrap::Tracker();
+    svec leag_camera_topics;
+    leag_camera_topics.reserve(image_topics_.size());
+    for (const auto & image_topic : image_topics_) {
+      leag_camera_topics.push_back(image_topic.first);
+    }
+    leag_tracker_->initializeLeagDetectors(leag_camera_topics, get_parameter("cameras").as_string());
+    puts("initialized LEAG detectors");
   }
-  // initializeLeagDetectors(leag_camera_topics);
-  puts("initialized LEAG detectors");
 #endif
 
 }
@@ -343,17 +292,28 @@ size_t SyncAndDetect::tagsFromImages(
     auto tags = std::make_shared<ApriltagArray>();
     tagMsgs->push_back(tags);
     tags->header = img->header;
+#ifndef USE_LEAG_DETECTOR
     cv_bridge::CvImageConstPtr cvImg = cv_bridge::toCvShare(img, "mono8");
     if (!cvImg) {
       BOMB_OUT("cannot convert image to mono!");
     }
     detectors_[i]->detect(cvImg->image, tags.get());
     auto detected_tags = tags->detections.size();
-
-#ifdef USE_LEAG_DETECTOR
+#else
+    cv::Mat mono;
+    try {
+      mono = wrap_mono8(*img);
+      detectors_[i]->detect(mono, tags.get());
+    } catch (const std::exception & e) {
+      BOMB_OUT(std::string("cannot convert image to mono: ") + e.what());
+    }
+    auto detected_tags = tags->detections.size();
     if(detect_leags_ && detected_tags > 0){ 
-        if( !detect_marker(cvImg->image, tags, i) ){
+        if( !leag_tracker_->detect_marker(mono, tags, i) ){
           tags->detections.clear();
+        }
+        if(detected_tags != tags->detections.size()){
+          LOG_INFO("Some tag is not LEAG tag: " << detected_tags << " -> " << tags->detections.size() );
         }
         detected_tags = tags->detections.size();
     }
@@ -363,116 +323,5 @@ size_t SyncAndDetect::tagsFromImages(
   return (num_tags);
 }
 
-
-
-
-#ifdef USE_LEAG_DETECTOR
-void SyncAndDetect::initializeLeagDetectors(std::vector<std::string> camera_topics)
-{     
-  const std::string str_camfile = get_parameter("cameras").as_string();
-  const std::string str_mkfile = "/params/markerPara_AZ.yaml";
-  YAML::Node cam_conf;
-  try {
-    cam_conf = YAML::LoadFile(str_camfile);
-  } catch (const YAML::Exception & e) {
-    std::cerr << "Failed to load " << str_camfile << ": " << e.what() << std::endl;
-    return;
-  }
-
-  for (const auto & cam : camera_topics) {
-    std::cout << "LEAG detector for camera topic: " << cam << std::endl;
-  }
-  LMT_list_.reserve(camera_topics.size());
-  for (const auto & cam : camera_topics) {
-    leag::LentiMarkTracker lmt;
-    cv::Size2i img_size;
-    cv::Mat camera_matrix;
-    cv::Mat dist_coeffs;
-
-    const bool ok = fillCameraParamsFromTagslamCameras( cam_conf, cam, &img_size, &camera_matrix, &dist_coeffs);
-    if (!ok) {
-      std::cerr << "Failed to assign camera params for topic: " << cam << std::endl;
-      continue;
-    }
-
-    const int res1 = lmt.setCamParams(img_size, camera_matrix, dist_coeffs);
-    const int res2 = lmt.setMarkerParams("/params/markerPara_AZ.yaml");
-    std::cout << "cam topic: " << cam << " setCamParams=" << res1 << " setMarkerParams=" << res2 << std::endl;
-    LMT_list_.push_back(lmt);
-  }
-}
-
-
-bool SyncAndDetect::detect_marker(const cv::Mat & img, ApriltagArray::SharedPtr tags, uint8_t camera_index)
-{
-  if (camera_index >= LMT_list_.size()) {
-    std::cerr << "Invalid camera index for LEAG detection: " << camera_index << std::endl;
-    return false;
-  }
-  std::vector<std::vector<cv::Point2f>> tagslam_corners;
-  std::vector<int> ids;
-  for (const auto & det : tags->detections) {
-    std::vector<cv::Point2f> corner(4);
-    for (size_t i = 0; i < 4; i++) {
-      corner[i] = cv::Point2f(det.corners[i].x, det.corners[i].y);
-    }
-    tagslam_corners.push_back(corner);
-    ids.push_back(det.id);
-  }
-  reverseCornerOrderInPlace(tagslam_corners);
-  int res;
-  if ((res = LMT_list_[camera_index].detect_nonAR(img, ids, tagslam_corners)) < 0) {
-    std::cerr << "LEAG detect error for camera index " << camera_index << ": " << res << std::endl;
-    return false;
-  }
-
-  std::vector<leag::LentiMarkTracker::ResultData> m_data;
-  int candidateNum = LMT_list_[camera_index].getResult(m_data);
-  if (candidateNum < 0) {
-    return false;
-  }
-
-  std::vector<int> ids_cor;
-  std::vector<int> ids_cen;
-  std::vector<std::vector<cv::Point2f>> leag_corners;
-  std::vector<cv::Point2f> centers;
-  candidateNum = LMT_list_[camera_index].getResultPKGData(ids_cor, leag_corners);
-  candidateNum = LMT_list_[camera_index].getResultPKGCenterData(ids_cen, centers);
-  if (candidateNum < 0) {
-    return false;
-  }
-  if (ids_cen.size() != ids_cor.size() || ids_cen.size() != leag_corners.size() ||
-    ids_cen.size() != centers.size())
-  {
-    std::cerr << "LEAG result size mismatch: ids_cen=" << ids_cen.size()
-              << " ids_cor=" << ids_cor.size()
-              << " corners=" << leag_corners.size()
-              << " centers=" << centers.size() << std::endl;
-    return false;
-  }
-
-  // Convert LEAG corner order back to TagSLAM corner order before publishing.
-  reverseCornerOrderInPlace(leag_corners);
-
-  tags->detections.clear();
-  tags->detections.reserve(ids_cen.size());
-  for (size_t i = 0; i < ids_cen.size(); ++i) {
-    apriltag_msgs::msg::AprilTagDetection det;
-    det.family = "leag";
-    det.hamming = 0;
-    det.goodness = 0.0;
-    det.decision_margin = 0.0;
-    det.id = ids_cen[i];
-    det.centre.x = centers[i].x;
-    det.centre.y = centers[i].y;
-    for (size_t j = 0; j < 4; ++j) {
-      det.corners[j].x = leag_corners[i][j].x;
-      det.corners[j].y = leag_corners[i][j].y;
-    }
-    tags->detections.push_back(det);
-  }
-  return true;
-}
-#endif
 
 }  // namespace tagslam

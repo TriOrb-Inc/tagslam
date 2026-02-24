@@ -31,6 +31,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <rosbag2_cpp/writer.hpp>
 #include <sensor_msgs/msg/image.hpp>
+#include <sensor_msgs/msg/compressed_image.hpp>
 #include <set>
 #include <std_msgs/msg/header.hpp>
 #include <std_srvs/srv/trigger.hpp>

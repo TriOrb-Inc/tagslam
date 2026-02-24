@@ -16,11 +16,6 @@
 #ifndef TAGSLAM__SYNC_AND_DETECT_HPP_
 #define TAGSLAM__SYNC_AND_DETECT_HPP_
 
-#ifdef USE_LEAG_DETECTOR
-  // #include "leag_detector.hpp"
-  #include "LentiMarkTracker.h"
-#endif
-
 #include <yaml-cpp/yaml.h>
 
 #include <apriltag_detector/detector.hpp>
@@ -169,9 +164,6 @@ private:
 
 #ifdef USE_LEAG_DETECTOR
   bool detect_leags_{false};
-  void initializeLeagDetectors(std::vector<std::string> camera_topics);
-  std::vector<leag::LentiMarkTracker> LMT_list_;
-  bool detect_marker(const cv::Mat &img, ApriltagArray::SharedPtr tags, uint8_t camera_index);
 #endif
 
 };

@@ -33,6 +33,26 @@ find_package(yaml-cpp REQUIRED)
 find_package(Boost REQUIRED COMPONENTS graph)
 find_package(GTSAM REQUIRED)
 
+# Optional LEAG detector support
+find_path(
+  LEAG_INCLUDE_DIR
+  NAMES LentiMarkTracker.h
+  PATHS /usr/local/include/leag
+  NO_DEFAULT_PATH)
+find_library(
+  LEAG_LIBRARY
+  NAMES LentiMarkTracker
+  PATHS /usr/local/lib/leag
+  NO_DEFAULT_PATH)
+
+if(LEAG_INCLUDE_DIR AND LEAG_LIBRARY)
+  set(HAVE_LEAG_DETECTOR ON)
+  message(STATUS "LEAG detector enabled: ${LEAG_INCLUDE_DIR}, ${LEAG_LIBRARY}")
+else()
+  set(HAVE_LEAG_DETECTOR OFF)
+  message(STATUS "LEAG detector disabled: /usr/local/include/leag or /usr/local/lib/leag/libLentiMarkTracker.so not found")
+endif()
+
 include_directories(/usr/local/include/eigen3)
 
 set(tagslam_ament_dependencies
@@ -64,6 +84,11 @@ set(sync_and_detect_ament_dependencies
   "rclcpp"
   "sensor_msgs")
 
+if(HAVE_LEAG_DETECTOR) # cv_bridgeの排除
+  list(REMOVE_ITEM tagslam_ament_dependencies cv_bridge)
+  list(REMOVE_ITEM sync_and_detect_ament_dependencies cv_bridge)
+endif()
+
 set(all_ament_dependencies
   ${tagslam_ament_dependencies}
   ${sync_and_detect_ament_dependencies})
@@ -74,26 +99,6 @@ endforeach()
 
 if(${cv_bridge_VERSION} GREATER "3.3.0")
   add_definitions(-DUSE_CV_BRIDGE_HPP)
-endif()
-
-# Optional LEAG detector support
-find_path(
-  LEAG_INCLUDE_DIR
-  NAMES LentiMarkTracker.h
-  PATHS /usr/local/include/leag
-  NO_DEFAULT_PATH)
-find_library(
-  LEAG_LIBRARY
-  NAMES LentiMarkTracker
-  PATHS /usr/local/lib/leag
-  NO_DEFAULT_PATH)
-
-if(LEAG_INCLUDE_DIR AND LEAG_LIBRARY)
-  set(HAVE_LEAG_DETECTOR ON)
-  message(STATUS "LEAG detector enabled: ${LEAG_INCLUDE_DIR}, ${LEAG_LIBRARY}")
-else()
-  set(HAVE_LEAG_DETECTOR OFF)
-  message(STATUS "LEAG detector disabled: /usr/local/include/leag or /usr/local/lib/leag/libLentiMarkTracker.so not found")
 endif()
 
 #
@@ -153,6 +158,36 @@ target_include_directories(
 
 rclcpp_components_register_nodes(${PROJECT_NAME} "${PROJECT_NAME}::TagSLAM")
 
+if(HAVE_LEAG_DETECTOR)
+  add_library(leag_tracker_wrapper SHARED
+    src/leag_wrapper.cpp
+  )
+
+  link_directories(/usr/local/lib/leag)
+
+  target_include_directories(leag_tracker_wrapper
+    PRIVATE
+      ${LEAG_INCLUDE_DIR}
+    PUBLIC
+      $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+      $<INSTALL_INTERFACE:include>
+  )
+
+  # wrapper は OpenCV と vendor ライブラリにリンク
+  target_link_libraries(leag_tracker_wrapper
+    PUBLIC
+      ${OpenCV_LIBRARIES}
+      ${LEAG_LIBRARY}   # find_library で見つけた libLentiMarkTracker.so
+      yaml-cpp
+  )
+
+  # ament 依存（必要なものだけ）
+  ament_target_dependencies(leag_tracker_wrapper
+    PUBLIC ${sync_and_detect_ament_dependencies})
+
+  target_compile_features(leag_tracker_wrapper PRIVATE cxx_std_17)
+endif()
+
 #
 # -------- node
 #
@@ -170,14 +205,19 @@ add_library(sync_and_detect SHARED
 )
 
 if(HAVE_LEAG_DETECTOR)
-  link_directories(/usr/local/lib/leag)
+  # link_directories(/usr/local/lib/leag)
   target_compile_definitions(sync_and_detect PRIVATE USE_LEAG_DETECTOR)
-  target_include_directories(sync_and_detect PRIVATE ${LEAG_INCLUDE_DIR})
-  target_link_libraries(sync_and_detect ${LEAG_LIBRARY} /usr/local/lib/leag/libLentiMarkTracker.so)
+  # target_include_directories(sync_and_detect PRIVATE ${LEAG_INCLUDE_DIR})
+  # set_target_properties(sync_and_detect PROPERTIES
+  #   BUILD_RPATH "/opt/opencv-4.5.5-lenti/lib;/usr/local/lib/leag"
+  #   INSTALL_RPATH "/opt/opencv-4.5.5-lenti/lib;/usr/local/lib/leag"
+  # )
+  target_link_libraries(sync_and_detect yaml-cpp leag_tracker_wrapper)
+else()
+  target_link_libraries(sync_and_detect yaml-cpp)
 endif()
 
 ament_target_dependencies(sync_and_detect ${sync_and_detect_ament_dependencies})
-target_link_libraries(sync_and_detect yaml-cpp)
 target_compile_features(sync_and_detect PRIVATE cxx_std_17)
 
 target_include_directories(
@@ -189,39 +229,22 @@ target_include_directories(
 rclcpp_components_register_nodes(sync_and_detect "${PROJECT_NAME}::SyncAndDetect")
 
 #
-# -------- processing from bag
-#
-# add_executable(${PROJECT_NAME}_from_bag
-  # src/${PROJECT_NAME}_from_bag.cpp
-  # src/enhanced_player.cpp)
-# ament_target_dependencies(${PROJECT_NAME}_from_bag
-  # ${tagslam_ament_dependencies}
-  # rosbag2_transport)
-# target_link_libraries(${PROJECT_NAME}_from_bag ${PROJECT_NAME} sync_and_detect)
-# target_include_directories(${PROJECT_NAME}_from_bag PRIVATE include)
-# target_compile_features(${PROJECT_NAME}_from_bag PRIVATE cxx_std_17)
-
-#
-# -------- sync-and-detect from bag
-#
-
-# add_executable(sync_and_detect_from_bag
-  # src/sync_and_detect_from_bag.cpp
-  # src/enhanced_player.cpp)
-# ament_target_dependencies(sync_and_detect_from_bag rosbag2_transport)
-# target_link_libraries(sync_and_detect_from_bag sync_and_detect yaml-cpp)
-
-# target_include_directories(sync_and_detect_from_bag PRIVATE include)
-# target_compile_features(sync_and_detect_from_bag PRIVATE cxx_std_17)
-
-#
 # -------- sync-and-detect node
 #
 
 add_executable(sync_and_detect_node src/sync_and_detect_node.cpp)
-target_link_libraries(sync_and_detect_node sync_and_detect)
 
-target_include_directories(sync_and_detect_node PRIVATE include)
+if(HAVE_LEAG_DETECTOR)
+  # link_directories(/usr/local/lib/leag)
+  # target_compile_definitions(sync_and_detect_node PRIVATE USE_LEAG_DETECTOR)
+  # target_include_directories(sync_and_detect_node PRIVATE include ${LEAG_INCLUDE_DIR})
+  target_link_libraries(sync_and_detect_node sync_and_detect ${LEAG_LIBRARY})
+  target_include_directories(sync_and_detect_node PRIVATE include)
+else()
+  target_link_libraries(sync_and_detect_node sync_and_detect)
+  target_include_directories(sync_and_detect_node PRIVATE include)
+endif()
+
 target_compile_features(sync_and_detect_node PRIVATE cxx_std_17)
 
 #
@@ -232,19 +255,27 @@ target_compile_features(sync_and_detect_node PRIVATE cxx_std_17)
 
 install(TARGETS
   ${PROJECT_NAME}_node
-  # ${PROJECT_NAME}_from_bag
   sync_and_detect_node
-  # sync_and_detect_from_bag
   DESTINATION lib/${PROJECT_NAME}/)
 
 # the shared library goes into the global lib dir so it can
 # be used as a composable node by other projects
 
-install(TARGETS
-  ${PROJECT_NAME}
-  sync_and_detect
-  DESTINATION lib
-)
+
+if(HAVE_LEAG_DETECTOR)
+  install(TARGETS
+    ${PROJECT_NAME}
+    sync_and_detect
+    leag_tracker_wrapper
+    DESTINATION lib
+  )
+else()
+  install(TARGETS
+    ${PROJECT_NAME}
+    sync_and_detect
+    DESTINATION lib
+  )
+endif()
 install(PROGRAMS
   DESTINATION lib/${PROJECT_NAME}/)
 
