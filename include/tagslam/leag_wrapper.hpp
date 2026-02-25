@@ -19,7 +19,7 @@ public:
   Tracker& operator=(const Tracker&) = delete;
 
   void initializeLeagDetectors(std::vector<std::string> camera_topics, std::string str_camfile);
-  bool detect_marker(const cv::Mat &img, ApriltagArray::SharedPtr tags, uint8_t camera_index);
+  bool detect_marker(const cv::Mat &img, ApriltagArray::SharedPtr tags, size_t camera_index);
 
 private:
   struct Impl;

@@ -309,6 +309,7 @@ size_t SyncAndDetect::tagsFromImages(
     }
     auto detected_tags = tags->detections.size();
     if(detect_leags_ && detected_tags > 0){ 
+        // std::cout << "detecting LEAG tags for camera index " << i << " with " << detected_tags << " tags detected by original detector" << std::endl;
         if( !leag_tracker_->detect_marker(mono, tags, i) ){
           tags->detections.clear();
         }

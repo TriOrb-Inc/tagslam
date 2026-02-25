@@ -1,6 +1,8 @@
 #include "tagslam/leag_wrapper.hpp"
 #include "LentiMarkTracker.h"
 
+// #define SAVE_IMAGE
+
 namespace tagslam::leagwrap {
 
 std::string normalizeTopic(const std::string & topic)
@@ -137,7 +139,7 @@ void Tracker::initializeLeagDetectors(std::vector<std::string> camera_topics, st
 }
 
 
-bool Tracker::detect_marker(const cv::Mat & img, ApriltagArray::SharedPtr tags, uint8_t camera_index)
+bool Tracker::detect_marker(const cv::Mat & img, ApriltagArray::SharedPtr tags, size_t camera_index)
 {
   if (camera_index >= impl_->LMT_list_.size()) {
     std::cerr << "Invalid camera index for LEAG detection: " << camera_index << std::endl;
@@ -205,6 +207,25 @@ bool Tracker::detect_marker(const cv::Mat & img, ApriltagArray::SharedPtr tags, 
     }
     tags->detections.push_back(det);
   }
+
+#ifdef SAVE_IMAGE
+  static uint32_t count=0;
+  if(count++ % 10 == 0){
+    cv::Mat color_img;
+    cv::cvtColor(img, color_img, cv::COLOR_GRAY2BGR);
+    for( size_t i=0; i<ids_cen.size(); i++ ){
+      const auto & corner = leag_corners[i];
+      const auto & center = centers[i];
+      cv::circle(color_img, center, 2, cv::Scalar(0,255,0), -1, cv::LINE_AA);
+      for (int j = 0; j < 4; ++j) {
+          cv::Point a = corner[j], b = corner[(j+1)%4];
+          cv::line(color_img, a, b, cv::Scalar(ids_cor[i]*2, (ids_cor[i]%2) * 100, (ids_cor[i]%10)*25), 1, cv::LINE_AA);
+      }
+    }
+    cv::imwrite("./test.png", color_img);
+  }
+#endif
+
   return true;
 }
 
