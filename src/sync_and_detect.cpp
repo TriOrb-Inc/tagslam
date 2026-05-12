@@ -70,6 +70,22 @@ SyncAndDetect::SyncAndDetect(const rclcpp::NodeOptions & opt)
     listener_ = pub_;
   }
   subscribe(image_topics_, odom_topics_, detector_names_);
+
+  loadEnableCameraListOrder(image_topics_);
+  enable_camera_list_sub_ = this->create_subscription<std_msgs::msg::Int8MultiArray>("/run_slam/set/enable_camera", 1,
+      [this](std_msgs::msg::Int8MultiArray::UniquePtr msg_unique_ptr) {
+          if(disable_set_enable_camera_) {
+            LOG_WARN("enable camera list is disabled due to config file error. Ignoring set enable camera request.");
+            return;
+          }
+          for (size_t ii = 0; ii < std::min(msg_unique_ptr->data.size(), image_topics_.size()); ii++) {
+              if( enable_camera_list_[ enable_camera_list_order_[ii] ] != msg_unique_ptr->data[ii]) {
+                LOG_INFO(image_topics_[enable_camera_list_order_[ii]].first << ": " << (msg_unique_ptr->data[ii] ? "enabled" : "disabled"));
+              }
+              enable_camera_list_[ enable_camera_list_order_[ii] ] = msg_unique_ptr->data[ii];
+          }
+      });
+  enable_camera_list_pub_ = this->create_publisher<std_msgs::msg::Int8MultiArray>("/tagslam/enable_camera", 1);
 }
 
 SyncAndDetect::~SyncAndDetect()
@@ -171,6 +187,13 @@ void SyncAndDetect::callbackImageAndOdom(
   num_frames_++;
   if (num_frames_ % 10 == 0) {
     LOG_INFO("frame " << num_frames_ << " total tags: " << num_tags_detected_);
+    if(!disable_set_enable_camera_) {
+      std_msgs::msg::Int8MultiArray enable_camera_list_msg;
+      for(size_t i = 0; i < enable_camera_list_.size(); i++){
+        enable_camera_list_msg.data.push_back(enable_camera_list_[enable_camera_list_order_[i]]);
+      }
+      enable_camera_list_pub_->publish(enable_camera_list_msg);
+    }
   }
   if (listener_) {
     listener_->callbackTagsAndOdom(tagMsgs, odoms);
@@ -184,6 +207,11 @@ void SyncAndDetect::callbackImage(const VecImagePtr & imgs)
   num_frames_++;
   if (num_frames_ % 10 == 0) {
     LOG_INFO("frame " << num_frames_ << " total tags: " << num_tags_detected_);
+    if(!disable_set_enable_camera_) {
+      std_msgs::msg::Int8MultiArray enable_camera_list_msg;
+      for(size_t i = 0; i < enable_camera_list_.size(); i++) enable_camera_list_msg.data.push_back(enable_camera_list_[enable_camera_list_order_[i]]);
+      enable_camera_list_pub_->publish(enable_camera_list_msg);
+    }
   }
   if (listener_) {
     listener_->callbackTags(tagMsgs);
@@ -242,12 +270,16 @@ size_t SyncAndDetect::tagsFromImages(
   const VecImagePtr & imgs, VecApriltagArrayPtr * tagMsgs)
 {
   assert(detectors_.size() == imgs.size());
+  assert(enable_camera_list_.size() == imgs.size());
   size_t num_tags{0};
   for (size_t i = 0; i < imgs.size(); i++) {
     const auto & img = imgs[i];
     auto tags = std::make_shared<ApriltagArray>();
     tagMsgs->push_back(tags);
     tags->header = img->header;
+    if(!enable_camera_list_[i]){
+      continue; // このカメラは無効になっているのでタグ検出をスキップする. headerはpublishするためにセットしておく.
+    }
     cv_bridge::CvImageConstPtr cvImg = cv_bridge::toCvShare(img, "mono8");
     if (!cvImg) {
       BOMB_OUT("cannot convert image to mono!");
@@ -257,4 +289,39 @@ size_t SyncAndDetect::tagsFromImages(
   }
   return (num_tags);
 }
+
+
+void SyncAndDetect::loadEnableCameraListOrder(const std::vector<std::pair<std::string, std::string>> & img_topics)
+{
+  const string p = "/params/omni_vslam.yaml";
+  YAML::Node config = YAML::LoadFile(p);
+  if (config.IsNull()) {
+    BOMB_OUT("cannot open config file: " << p);
+    disable_set_enable_camera_ = true;
+  }
+  std::vector<std::string> cam_names;
+  for (const auto camera : config["Camera"]["cameras"]) {
+    const std::string name = "/" + camera["topic"].as<std::string>();
+    cam_names.push_back(name);
+  }
+
+  if(cam_names.size() != img_topics.size()){
+    BOMB_OUT("number of cameras in omni_vslam.yaml does not match number of cameras in sync_and_detect config!");
+    disable_set_enable_camera_ = true;
+  }
+  for(const auto & tp : img_topics) {
+    enable_camera_list_.push_back(1); // デフォルトでは全てのカメラを有効にする
+    for(int i = 0; i < cam_names.size(); i++){
+      if(tp.first == cam_names[i]){
+        enable_camera_list_order_.push_back(i);
+        break;
+      }
+    }
+  }
+  if(enable_camera_list_order_.size() != img_topics.size()){
+    BOMB_OUT("number of cameras in omni_vslam.yaml does not match number of cameras in sync_and_detect config!");
+    disable_set_enable_camera_ = true;
+  }
+}
+
 }  // namespace tagslam

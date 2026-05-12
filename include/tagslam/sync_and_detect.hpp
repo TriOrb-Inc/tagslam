@@ -28,6 +28,7 @@
 #include <pluginlib/class_loader.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/image.hpp>
+#include <std_msgs/msg/int8_multi_array.hpp>
 #include <set>
 
 namespace flex_sync
@@ -143,6 +144,8 @@ private:
 
   size_t tagsFromImages(
     const VecImagePtr & imgs, VecApriltagArrayPtr * tagMsgs);
+  
+  void loadEnableCameraListOrder(const std::vector<std::pair<std::string, std::string>> & img_topics);
 
   // ----------------- variables ----------------------------------
   pluginlib::ClassLoader<apriltag_detector::Detector> detector_loader_;
@@ -161,6 +164,11 @@ private:
   std::shared_ptr<ImageAndOdomExactSync> image_odom_exact_sync_;
   std::shared_ptr<ImageApproxSync> image_approx_sync_;
   std::shared_ptr<ImageAndOdomApproxSync> image_odom_approx_sync_;
+  std::shared_ptr<rclcpp::Subscription<std_msgs::msg::Int8MultiArray>> enable_camera_list_sub_; // ロボット姿勢推定に使用するカメラのリストを受け取る
+  std::shared_ptr<rclcpp::Publisher<std_msgs::msg::Int8MultiArray>> enable_camera_list_pub_;    // ロボット姿勢推定に使用されているカメラのリストを送信する
+  std::vector<int8_t> enable_camera_list_;
+  std::vector<int8_t> enable_camera_list_order_;
+  bool disable_set_enable_camera_{false};
 };
 
 }  // namespace tagslam
