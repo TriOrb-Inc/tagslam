@@ -23,6 +23,7 @@
 #include <tf2/transform_datatypes.h>
 #include <yaml-cpp/yaml.h>
 
+#include <chrono>
 #include <cmath>
 #include <filesystem>
 #include <geometry_msgs/msg/point.hpp>
@@ -194,8 +195,21 @@ void TagSLAM::readParams()
   fixedFrame_ = declare_parameter<string>("fixed_frame_id", "map");
   maxFrameNum_ = declare_parameter<int>("max_number_of_frames", 0);
   publishAck_ = declare_parameter<bool>("publish_ack", false);
+  loadedMapName_ = declare_parameter<string>("loaded_map_name", "");
+  loadedMapPublishPeriodSec_ =
+    declare_parameter<double>("loaded_map_publish_period_sec", 1.0);
   dropDuplicateTagsAcrossCameras_ =
     declare_parameter<bool>("drop_duplicate_tags_across_cameras", true);
+}
+
+void TagSLAM::publishLoadedMapName()
+{
+  if (!loadedMapPub_) {
+    return;
+  }
+  String msg;
+  msg.data = loadedMapName_;
+  loadedMapPub_->publish(msg);
 }
 
 static YAML::Node readConfig(
@@ -272,12 +286,20 @@ bool TagSLAM::initialize()
   if (publishAck_) {
     ackPub_ = node_->create_publisher<Header>("acknowledge", 10);
   }
+  loadedMapPub_ = node_->create_publisher<String>("tagslam/loaded_map", 1);
   // optimize the initial setup if necessary
   graph_->optimize(0);
   // open output files
   tagCornerFile_.open("tag_corners.txt");
   // make a deep copy of the initial graph now
   graph_.reset(initialGraph_->clone());
+  publishLoadedMapName();
+  if (loadedMapPublishPeriodSec_ > 0.0) {
+    const auto period = std::chrono::duration_cast<std::chrono::nanoseconds>(
+      std::chrono::duration<double>(loadedMapPublishPeriodSec_));
+    loadedMapTimer_ = node_->create_wall_timer(
+      period, std::bind(&TagSLAM::publishLoadedMapName, this));
+  }
   return (true);
 }
 
