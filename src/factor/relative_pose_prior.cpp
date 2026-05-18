@@ -27,9 +27,9 @@ namespace factor
 VertexDesc RelativePosePrior::addToGraph(const VertexPtr & vp, Graph * g) const
 {
   // NOTE: poses and pose prior factor names must match!
-  const VertexDesc pp = g->findPose(getPreviousTime(), getName());
+  const VertexDesc pp = g->findPose(getPreviousTime(), getPoseName());
   checkIfValid(pp, "no prev pose for relative pose prior");
-  const VertexDesc cp = g->findPose(getTime(), getName());
+  const VertexDesc cp = g->findPose(getTime(), getPoseName());
   checkIfValid(cp, "no current pose for relative pose prior");
   const VertexDesc fv = g->insertFactor(vp);
   g->addEdge(fv, pp, 0);

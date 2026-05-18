@@ -86,6 +86,18 @@ public:
     return (fakeOdomTranslationNoise_);
   }
   double getFakeOdomRotationNoise() const { return (fakeOdomRotationNoise_); }
+  double getGroundConstraintHeightNoise() const
+  {
+    return (groundConstraintHeightNoise_);
+  }
+  double getGroundConstraintRollNoise() const
+  {
+    return (groundConstraintRollNoise_);
+  }
+  double getGroundConstraintPitchNoise() const
+  {
+    return (groundConstraintPitchNoise_);
+  }
   double getOverrideTagRotationNoise() const
   {
     return (overrideTagRotationNoise_);
@@ -152,6 +164,9 @@ protected:
   double odomAccelerationNoiseMax_{50.0};         // m/s^2
   double odomAngularAccelerationNoiseMax_{50.0};  // rad/sec^2
   Transform T_body_odom_;
+  double groundConstraintHeightNoise_{-1.0};
+  double groundConstraintRollNoise_{-1.0};
+  double groundConstraintPitchNoise_{-1.0};
   // -------- static functions
   static BodyPtr parse_body(const string & name, const YAML::Node & config);
 

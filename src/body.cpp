@@ -86,6 +86,22 @@ bool Body::parseCommon(const YAML::Node & body)
       body, "odom_angular_acceleration_noise_max",
       10 * odomAngularAccelerationNoiseMin_);
 
+    const auto groundConstraint = body["ground_constraint"];
+    if (groundConstraint) {
+      groundConstraintHeightNoise_ =
+        yaml::parse<double>(groundConstraint, "height_noise", -1.0);
+      groundConstraintRollNoise_ =
+        yaml::parse<double>(groundConstraint, "roll_noise", -1.0);
+      groundConstraintPitchNoise_ =
+        yaml::parse<double>(groundConstraint, "pitch_noise", -1.0);
+    } else {
+      groundConstraintHeightNoise_ =
+        yaml::parse<double>(body, "ground_constraint_height_noise", -1.0);
+      groundConstraintRollNoise_ =
+        yaml::parse<double>(body, "ground_constraint_roll_noise", -1.0);
+      groundConstraintPitchNoise_ =
+        yaml::parse<double>(body, "ground_constraint_pitch_noise", -1.0);
+    }
     ignoreTags_ = yaml::parse_container<std::set<int>>(
       body, "ignore_tags", std::set<int>());
     poseWithNoise_ = yaml::parse<PoseWithNoise>(body, "pose", PoseWithNoise());

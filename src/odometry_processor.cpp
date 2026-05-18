@@ -45,6 +45,28 @@ OdometryProcessor::OdometryProcessor(
   T_body_odom_ = body->getTransformBodyOdom();
 }
 
+bool OdometryProcessor::hasGroundConstraint(const BodyConstPtr & body)
+{
+  return (
+    body->getGroundConstraintHeightNoise() > 0.0 &&
+    body->getGroundConstraintRollNoise() > 0.0 &&
+    body->getGroundConstraintPitchNoise() > 0.0);
+}
+
+static PoseWithNoise make_ground_constraint_pose(const BodyConstPtr & body)
+{
+  constexpr double kLargeAngleNoise = 1.0e3;
+  constexpr double kLargePositionNoise = 1.0e3;
+  const Point3d angle(
+    body->getGroundConstraintRollNoise(),
+    body->getGroundConstraintPitchNoise(), kLargeAngleNoise);
+  const Point3d pos(
+    kLargePositionNoise, kLargePositionNoise,
+    body->getGroundConstraintHeightNoise());
+  const PoseNoise pn = PoseNoise::make(angle, pos);
+  return (PoseWithNoise(Transform::Identity(), pn, true));
+}
+
 static Transform to_pose(const OdometryConstPtr & odom)
 {
   const auto & q = odom->pose.pose.orientation;
@@ -157,30 +179,53 @@ void OdometryProcessor::process(
     updateStatistics(t, deltaPose);
     auto fac = add_body_pose_delta(graph, time_, t, body_, pwn);
     factors->push_back(fac);
+    if (hasGroundConstraint(body_)) {
+      factors->push_back(add_body_ground_constraint(graph, time_, t, body_));
+    }
   }
   pose_ = newPose;
   time_ = t;
+}
+
+VertexDesc OdometryProcessor::add_body_pose_delta_with_name(
+  Graph * graph, uint64_t tPrev, uint64_t tCurr, const BodyConstPtr & body,
+  const PoseWithNoise & deltaPose, const std::string & poseName,
+  const std::string & factorName)
+{
+  Transform prevPose;
+  const VertexDesc pp = graph->findPose(tPrev, poseName);
+  const VertexDesc cp = graph->findPose(tCurr, poseName);
+  if (!Graph::is_valid(pp)) {
+    LOG_DEBUG("adding previous pose for " << poseName << " " << tPrev);
+    graph->addPose(tPrev, poseName, false);
+  }
+  if (!Graph::is_valid(cp)) {
+    LOG_DEBUG("adding current pose for " << poseName << " " << tCurr);
+    graph->addPose(tCurr, poseName, false);
+  }
+  RelativePosePriorFactorPtr fac(
+    new factor::RelativePosePrior(
+      tCurr, tPrev, deltaPose, factorName, poseName));
+  return (fac->addToGraph(fac, graph));
 }
 
 VertexDesc OdometryProcessor::add_body_pose_delta(
   Graph * graph, uint64_t tPrev, uint64_t tCurr, const BodyConstPtr & body,
   const PoseWithNoise & deltaPose)
 {
-  Transform prevPose;
-  const std::string name = Graph::body_name(body->getName());
-  const VertexDesc pp = graph->findPose(tPrev, name);
-  const VertexDesc cp = graph->findPose(tCurr, name);
-  if (!Graph::is_valid(pp)) {
-    LOG_DEBUG("adding previous pose for " << name << " " << tPrev);
-    graph->addPose(tPrev, name, false);
-  }
-  if (!Graph::is_valid(cp)) {
-    LOG_DEBUG("adding current pose for " << name << " " << tCurr);
-    graph->addPose(tCurr, name, false);
-  }
-  RelativePosePriorFactorPtr fac(
-    new factor::RelativePosePrior(tCurr, tPrev, deltaPose, name));
-  return (fac->addToGraph(fac, graph));
+  const std::string poseName = Graph::body_name(body->getName());
+  return (add_body_pose_delta_with_name(
+    graph, tPrev, tCurr, body, deltaPose, poseName, poseName));
+}
+
+VertexDesc OdometryProcessor::add_body_ground_constraint(
+  Graph * graph, uint64_t tPrev, uint64_t tCurr, const BodyConstPtr & body)
+{
+  const PoseWithNoise pwn = make_ground_constraint_pose(body);
+  const std::string poseName = Graph::body_name(body->getName());
+  const std::string factorName = poseName + "_ground_constraint";
+  return (add_body_pose_delta_with_name(
+    graph, tPrev, tCurr, body, pwn, poseName, factorName));
 }
 
 }  // namespace tagslam
