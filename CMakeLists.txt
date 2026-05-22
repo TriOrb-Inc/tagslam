@@ -49,6 +49,7 @@ set(tagslam_ament_dependencies
   "tf2_ros"
   "tf2_msgs"
   "tf2"
+  "triorb_slam_interface"
   "rosgraph_msgs"
   "std_srvs")
 

@@ -46,12 +46,30 @@ class GraphUpdater
   using string = std::string;
 
 public:
+  enum class UpdateStatus
+  {
+    OK,
+    NO_NEW_FACTORS,
+    NO_SUBGRAPH,
+    SUBGRAPH_INITIALIZATION_FAILED,
+    SUBGRAPH_ERROR_TOO_LARGE,
+    POSE_INIT_LOW_VIEWING_ANGLE,
+    POSE_INIT_AMBIGUITY,
+  };
+
+  struct UpdateResult
+  {
+    UpdateStatus status{UpdateStatus::OK};
+    int tagId{-1};
+  };
+
   GraphUpdater(const GraphUpdater &) = delete;
   GraphUpdater();
   typedef std::deque<VertexDesc> VertexDeque;
   // ---------------------
   void setOptimizerMode(const std::string & mode);
-  void processNewFactors(Graph * g, uint64_t t, const VertexVec & facs);
+  UpdateResult processNewFactors(
+    Graph * g, uint64_t t, const VertexVec & facs);
   void printPerformance();
   double getPixelNoise() const { return (pixelNoise_); }
   const string & getOptimizerMode() const { return (optimizerMode_); }
@@ -68,11 +86,11 @@ private:
 
   double initializeSubgraphs(
     Graph * g, std::vector<GraphPtr> * subGraphs,
-    const std::vector<VertexDeque> & verts);
+    const std::vector<VertexDeque> & verts, UpdateResult * result);
   void exploreSubGraph(
     Graph * g, uint64_t t, VertexDesc start, SubGraph * subGraph,
     SubGraph * found);
-  bool applyFactorsToGraph(
+  UpdateResult applyFactorsToGraph(
     Graph * g, uint64_t t, const VertexVec & facs, SubGraph * covered);
   void eraseStoredFactors(
     uint64_t t, const SubGraph::FactorCollection & covered);

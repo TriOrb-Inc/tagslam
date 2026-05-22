@@ -287,6 +287,11 @@ bool TagSLAM::initialize()
     ackPub_ = node_->create_publisher<Header>("acknowledge", 10);
   }
   loadedMapPub_ = node_->create_publisher<String>("tagslam/loaded_map", 1);
+  poseEstimationErrorPub_ =
+    node_->create_publisher<UInt8>("tagslam/pose_estimation_error", 1);
+  poseEstimationWarningPub_ =
+    node_->create_publisher<TagSlamWarning>(
+      "tagslam/pose_estimation_warning", 1);
   // optimize the initial setup if necessary
   graph_->optimize(0);
   // open output files
@@ -758,7 +763,104 @@ void TagSLAM::publishBodyOdom(const uint64_t t)
         trajectory_[body_idx].poses.push_back(pose_msg);
         pathPub_[body_idx]->publish(trajectory_[body_idx]);
       }
+    } else {
+      LOG_WARN(
+        "pose estimation failed: no optimized pose for body "
+        << body->getName() << " at " << t);
+      if (!suppressPoseEstimationErrorForCurrentFrame_) {
+        publishPoseEstimationError(
+          POSE_ESTIMATION_ERROR_BODY_POSE_NOT_OPTIMIZED);
+      }
     }
+  }
+}
+
+void TagSLAM::publishPoseEstimationError(PoseEstimationErrorCode code)
+{
+  if (!poseEstimationErrorPub_ || code == POSE_ESTIMATION_ERROR_NONE) {
+    return;
+  }
+  UInt8 msg;
+  msg.data = static_cast<uint8_t>(code);
+  poseEstimationErrorPub_->publish(msg);
+}
+
+void TagSLAM::publishPoseEstimationWarning(
+  PoseEstimationWarningCode code, int tagId)
+{
+  if (
+    !poseEstimationWarningPub_ || code == POSE_ESTIMATION_WARNING_NONE ||
+    tagId < 0) {
+    return;
+  }
+  TagSlamWarning msg;
+  msg.warning_codes.push_back(static_cast<uint8_t>(code));
+  msg.tag_ids.push_back(tagId);
+  poseEstimationWarningPub_->publish(msg);
+}
+
+static TagSLAM::PoseEstimationErrorCode pose_graph_status_to_error_code(
+  GraphUpdater::UpdateStatus status)
+{
+  switch (status) {
+    case GraphUpdater::UpdateStatus::OK:
+      return (TagSLAM::POSE_ESTIMATION_ERROR_NONE);
+    case GraphUpdater::UpdateStatus::NO_NEW_FACTORS:
+      return (TagSLAM::POSE_ESTIMATION_ERROR_POSE_GRAPH_NO_NEW_FACTORS);
+    case GraphUpdater::UpdateStatus::NO_SUBGRAPH:
+      return (TagSLAM::POSE_ESTIMATION_ERROR_POSE_GRAPH_NO_SUBGRAPH);
+    case GraphUpdater::UpdateStatus::SUBGRAPH_INITIALIZATION_FAILED:
+      return (
+        TagSLAM::POSE_ESTIMATION_ERROR_POSE_GRAPH_INITIALIZATION_FAILED);
+    case GraphUpdater::UpdateStatus::SUBGRAPH_ERROR_TOO_LARGE:
+      return (TagSLAM::POSE_ESTIMATION_ERROR_POSE_GRAPH_ERROR_TOO_LARGE);
+    case GraphUpdater::UpdateStatus::POSE_INIT_LOW_VIEWING_ANGLE:
+    case GraphUpdater::UpdateStatus::POSE_INIT_AMBIGUITY:
+      return (TagSLAM::POSE_ESTIMATION_ERROR_NONE);
+  }
+  return (TagSLAM::POSE_ESTIMATION_ERROR_NONE);
+}
+
+static TagSLAM::PoseEstimationWarningCode pose_graph_status_to_warning_code(
+  GraphUpdater::UpdateStatus status)
+{
+  switch (status) {
+    case GraphUpdater::UpdateStatus::POSE_INIT_LOW_VIEWING_ANGLE:
+      return (
+        TagSLAM::POSE_ESTIMATION_WARNING_POSE_INIT_LOW_VIEWING_ANGLE);
+    case GraphUpdater::UpdateStatus::POSE_INIT_AMBIGUITY:
+      return (TagSLAM::POSE_ESTIMATION_WARNING_POSE_INIT_AMBIGUITY);
+    default:
+      return (TagSLAM::POSE_ESTIMATION_WARNING_NONE);
+  }
+}
+
+static TagSLAM::PoseEstimationWarningCode tag_filter_status_to_warning_code(
+  TagSLAM::TagFilterStatus status)
+{
+  switch (status) {
+    case TagSLAM::TagFilterStatus::OK:
+    case TagSLAM::TagFilterStatus::NONE_SEEN:
+      return (TagSLAM::POSE_ESTIMATION_WARNING_NONE);
+    case TagSLAM::TagFilterStatus::HAMMING_DISTANCE:
+      return (
+        TagSLAM::POSE_ESTIMATION_WARNING_TAG_FILTERED_BY_HAMMING_DISTANCE);
+    case TagSLAM::TagFilterStatus::AMNESIA:
+      return (TagSLAM::POSE_ESTIMATION_WARNING_TAG_FILTERED_BY_AMNESIA);
+    case TagSLAM::TagFilterStatus::BODY_CONFIG:
+      return (TagSLAM::POSE_ESTIMATION_WARNING_TAG_FILTERED_BY_BODY_CONFIG);
+    case TagSLAM::TagFilterStatus::MINIMUM_AREA:
+      return (TagSLAM::POSE_ESTIMATION_WARNING_TAG_FILTERED_BY_MINIMUM_AREA);
+  }
+  return (TagSLAM::POSE_ESTIMATION_WARNING_NONE);
+}
+
+static void set_tag_filter_status_if_unset(
+  TagSLAM::TagFilterResult * result, TagSLAM::TagFilterStatus value, int tagId)
+{
+  if (result->status == TagSLAM::TagFilterStatus::OK) {
+    result->status = value;
+    result->tagId = tagId;
   }
 }
 
@@ -816,6 +918,7 @@ void TagSLAM::processTagsAndOdom(
   }
   if (origtagmsgs.empty() && odommsgs.empty()) {
     LOG_WARN("got called with neither tags nor odom!");
+    publishPoseEstimationError(POSE_ESTIMATION_ERROR_NO_INPUT);
     return;
   }
   // the first odom or tag message determines the time stamp
@@ -827,16 +930,26 @@ void TagSLAM::processTagsAndOdom(
     publishInitialTransforms_ = false;
   }
   std::vector<TagArrayConstPtr> tagmsgs;
-  remapAndSquash(t, &tagmsgs, origtagmsgs);
+  TagFilterResult tagFilterResult;
+  remapAndSquash(t, &tagmsgs, origtagmsgs, &tagFilterResult);
   if (tagmsgs.empty() && odommsgs.empty()) {
     LOG_WARN("squashed hard: have neither tags nor odom!");
+    publishPoseEstimationError(POSE_ESTIMATION_ERROR_ALL_INPUTS_FILTERED);
     return;
   }
   if (!times_.empty() && t <= times_.back()) {
     LOG_WARN("received old time stamp: " << t);
+    publishPoseEstimationError(POSE_ESTIMATION_ERROR_OLD_TIMESTAMP);
     return;
   }
   const bool hasOdom = !odommsgs.empty() || useFakeOdom_;
+  bool hasTagDetections = false;
+  for (const auto & msg : tagmsgs) {
+    if (!msg->detections.empty()) {
+      hasTagDetections = true;
+      break;
+    }
+  }
   if (anyTagsVisible(tagmsgs) || hasOdom) {
     // if we have any new valid observations,
     // add unknown poses for all non-static bodies
@@ -852,21 +965,46 @@ void TagSLAM::processTagsAndOdom(
   }
   profiler_.record("processOdom");
   profiler_.reset("processTags");
-  processTags(t, tagmsgs, &factors);
+  const TagFilterResult processTagsResult = processTags(t, tagmsgs, &factors);
+  if (
+    processTagsResult.status != TagFilterStatus::OK &&
+    processTagsResult.status != TagFilterStatus::NONE_SEEN) {
+    tagFilterResult = processTagsResult;
+  }
   profiler_.record("processTags");
   profiler_.reset("processNewFactors");
+  GraphUpdater::UpdateResult poseGraphResult;
   try {
-    graphUpdater_.processNewFactors(graph_.get(), t, factors);
+    poseGraphResult =
+      graphUpdater_.processNewFactors(graph_.get(), t, factors);
   } catch (const OptimizerException & e) {
     LOG_WARN("optimizer crapped out!");
     LOG_WARN(e.what());
+    publishPoseEstimationError(POSE_ESTIMATION_ERROR_OPTIMIZER_FAILED);
     finalize(false);
     throw(e);
+  }
+  const auto tagFilterWarning =
+    tag_filter_status_to_warning_code(tagFilterResult.status);
+  publishPoseEstimationWarning(tagFilterWarning, tagFilterResult.tagId);
+  if (hasTagDetections || hasOdom) {
+    const auto poseGraphWarning =
+      pose_graph_status_to_warning_code(poseGraphResult.status);
+    publishPoseEstimationWarning(poseGraphWarning, poseGraphResult.tagId);
+    const auto poseGraphError =
+      pose_graph_status_to_error_code(poseGraphResult.status);
+    if (
+      poseGraphError != POSE_ESTIMATION_ERROR_POSE_GRAPH_NO_NEW_FACTORS ||
+      tagFilterWarning == POSE_ESTIMATION_WARNING_NONE) {
+      publishPoseEstimationError(poseGraphError);
+    }
   }
   profiler_.record("processNewFactors");
   profiler_.reset("publish");
   times_.push_back(t);
+  suppressPoseEstimationErrorForCurrentFrame_ = !hasTagDetections && !hasOdom;
   publishAll(t);
+  suppressPoseEstimationErrorForCurrentFrame_ = false;
   frameNum_++;
   if (publishAck_) {
     ackPub_->publish(header);
@@ -1110,11 +1248,12 @@ std::vector<TagConstPtr> TagSLAM::findTags(const std::vector<Apriltag> & ta)
   return (tpv);
 }
 
-void TagSLAM::processTags(
+TagSLAM::TagFilterResult TagSLAM::processTags(
   uint64_t t, const std::vector<TagArrayConstPtr> & tagMsgs,
   std::vector<VertexDesc> * factors)
 {
   if (tagMsgs.size() != cameras_.size()) {
+    publishPoseEstimationError(POSE_ESTIMATION_ERROR_TAG_MESSAGE_SIZE_MISMATCH);
     BOMB_OUT(
       "tag msgs size mismatch: " << tagMsgs.size() << " " << cameras_.size());
   }
@@ -1130,13 +1269,21 @@ void TagSLAM::processTags(
   typedef std::multimap<double, VertexDesc> MMap;
   MMap sortedFactors;
   std::vector<std::vector<TagCandidate>> camCandidates(cameras_.size());
+  TagFilterResult filterResult;
+  filterResult.status = TagFilterStatus::NONE_SEEN;
+  bool addedTagProjectionFactor = false;
 
   for (size_t i = 0; i < cameras_.size(); i++) {
     const auto & cam = cameras_[i];
     std::unordered_map<int, TagCandidate> bestById;
     for (const auto & detection : tagMsgs[i]->detections) {
+      if (filterResult.status == TagFilterStatus::NONE_SEEN) {
+        filterResult.status = TagFilterStatus::OK;
+      }
       TagConstPtr tagPtr = findTag(detection.id);
       if (!tagPtr) {
+        set_tag_filter_status_if_unset(
+          &filterResult, TagFilterStatus::BODY_CONFIG, detection.id);
         continue;
       }
       const auto * corners = &(detection.corners[0]);
@@ -1144,6 +1291,8 @@ void TagSLAM::processTags(
       if (sz < minTagArea_) {
         LOG_WARN(
           "dropping tag: " << tagPtr->getId() << " due to small size: " << sz);
+        set_tag_filter_status_if_unset(
+          &filterResult, TagFilterStatus::MINIMUM_AREA, detection.id);
         continue;
       }
       auto it = bestById.find(detection.id);
@@ -1231,17 +1380,22 @@ void TagSLAM::processTags(
         cam->getName() + "-" + Graph::tag_name(candidate.tag->getId())));
       auto fac = fp->addToGraph(fp, graph_.get());
       sortedFactors.insert(MMap::value_type(candidate.size, fac));
+      addedTagProjectionFactor = true;
       writeTagCorners(t, cam->getIndex(), candidate.tag, candidate.corners);
     }
   }
   for (auto it = sortedFactors.rbegin(); it != sortedFactors.rend(); ++it) {
     factors->push_back(it->second);
   }
+  if (addedTagProjectionFactor) {
+    return (TagFilterResult{TagFilterStatus::OK, -1});
+  }
+  return (filterResult);
 }
 
 void TagSLAM::remapAndSquash(
   uint64_t t, std::vector<TagArrayConstPtr> * remapped,
-  const std::vector<TagArrayConstPtr> & orig)
+  const std::vector<TagArrayConstPtr> & orig, TagFilterResult * result)
 {
   //
   // Sometimes there are tags with duplicate ids in the data set.
@@ -1261,11 +1415,15 @@ void TagSLAM::remapAndSquash(
         LOG_WARN(
           "dropped tag " << tag.id << " with hamming dist: " << tag.hamming
                          << " > " << maxHammingDistance_);
+        set_tag_filter_status_if_unset(
+          result, TagFilterStatus::HAMMING_DISTANCE, tag.id);
         continue;
       }
 
       if (amnesia_ && tagMap_.find(tag.id) == tagMap_.end()) {
         LOG_WARN("time " << t << " amnesia mode: unknown tag " << tag.id);
+        set_tag_filter_status_if_unset(
+          result, TagFilterStatus::AMNESIA, tag.id);
         continue;
       }
 
@@ -1274,6 +1432,8 @@ void TagSLAM::remapAndSquash(
       } else {
         if (!sqc || sqc->count(tag.id) == 0) {  // no camera squash?
           p->detections.push_back(tag);
+        } else {
+          LOG_INFO("time " << t << " camera-squashed tag: " << tag.id);
         }
       }
     }

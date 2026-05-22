@@ -375,7 +375,8 @@ static bool init_from_rel_pose_prior(Graph * g, const VertexDesc & v)
 }
 
 static bool init_from_proj_factor(
-  Graph * g, const VertexDesc & v, const init_pose::Params & poseInitParams)
+  Graph * g, const VertexDesc & v, const init_pose::Params & poseInitParams,
+  GraphUpdater::UpdateResult * result)
 {
   auto fp = std::dynamic_pointer_cast<factor::TagProjection>((*g)[v]);
   if (!fp) {
@@ -384,11 +385,11 @@ static bool init_from_proj_factor(
   // do homography for this vertex
   const CameraIntrinsics ci = fp->getCamera()->getIntrinsics();
   LOG_DEBUG("computing pose for factor " << g->info(v));
-  auto rv = init_pose::pose_from_4(
+  auto rv = init_pose::pose_from_4_with_reason(
     fp->getImageCorners(), fp->getTag()->getObjectCorners(), ci.getK(),
     ci.getDistortionModel(), ci.getD(), poseInitParams);
-  if (rv.second) {  // got valid homography
-    const Transform & tf = rv.first;
+  if (rv.valid) {  // got valid homography
+    const Transform & tf = rv.pose;
     if (set_value_from_tag_projection(g, v, tf)) {
       if (!g->isOptimized(v)) {
         // add factor to optimizer. The values are already there.
@@ -401,7 +402,17 @@ static bool init_from_proj_factor(
       return (false);  // not enough info to pin down pose!
     }
   } else {
-    // LOG_INFO("could not find valid homography!");
+    if (
+      rv.rejectReason == init_pose::RejectReason::LOW_VIEWING_ANGLE &&
+      result->status == GraphUpdater::UpdateStatus::OK) {
+      result->status = GraphUpdater::UpdateStatus::POSE_INIT_LOW_VIEWING_ANGLE;
+      result->tagId = fp->getTag()->getId();
+    } else if (
+      rv.rejectReason == init_pose::RejectReason::AMBIGUITY &&
+      result->status == GraphUpdater::UpdateStatus::OK) {
+      result->status = GraphUpdater::UpdateStatus::POSE_INIT_AMBIGUITY;
+      result->tagId = fp->getTag()->getId();
+    }
     return (false);
   }
   return (true);
@@ -427,7 +438,9 @@ find_vertexes_to_remove(const Graph & g)
   return (vertexesToRemove);
 }
 
-static bool initialize_subgraph(Graph * g, const init_pose::Params & params)
+static bool initialize_subgraph(
+  Graph * g, const init_pose::Params & params,
+  GraphUpdater::UpdateResult * result)
 {
   // first intialize poses from absolute pose priors since
   // those are the most reliable.
@@ -453,7 +466,7 @@ static bool initialize_subgraph(Graph * g, const init_pose::Params & params)
   // camera calibration!) to become useful in determining the
   // camera-to-rig pose.
   for (const auto & v : unhandled2) {
-    if (init_from_proj_factor(g, v, params)) {
+    if (init_from_proj_factor(g, v, params, result)) {
       continue;
     }
     if (init_from_rel_pose_prior(g, v)) {
@@ -476,7 +489,8 @@ static bool try_initialization(
   const Graph & g, const VertexDeque & factors, int ord,
   const init_pose::Params & poseInitParams, double errLimit,
   double absPriorPositionNoise, double absPriorRotationNoise, double * errMin,
-  GraphPtr * bestGraph, Profiler * profiler)
+  GraphPtr * bestGraph, Profiler * profiler,
+  GraphUpdater::UpdateResult * result)
 {
   GraphPtr sg(new Graph());
   Graph & subGraph = *sg;
@@ -484,7 +498,7 @@ static bool try_initialization(
   graph_utils::copy_subgraph(
     sg.get(), g, factors, absPriorPositionNoise, absPriorRotationNoise);
   // subGraph.print("init subgraph");
-  if (initialize_subgraph(&subGraph, poseInitParams)) {
+  if (initialize_subgraph(&subGraph, poseInitParams, result)) {
     profiler->reset("subgraphOpt");
     double err = subGraph.optimizeFull();
     profiler->record("subgraphOpt");
@@ -517,7 +531,7 @@ static bool try_initialization(
 
 double GraphUpdater::initializeSubgraphs(
   Graph * graph, std::vector<GraphPtr> * subGraphs,
-  const std::vector<VertexDeque> & verts)
+  const std::vector<VertexDeque> & verts, UpdateResult * result)
 {
   double totalSGError(0);
 
@@ -533,14 +547,21 @@ double GraphUpdater::initializeSubgraphs(
     GraphPtr bestGraph;
     int ord(0);
     double errMin = 1e10;
+    UpdateResult initFailureResult;
     for (const auto & ordering : orderings) {
       ord++;
+      UpdateResult orderingResult;
       if (try_initialization(
             *graph, ordering, ord, poseInitParams_, maxSubgraphError_,
             subGraphAbsPriorPositionNoise_, subGraphAbsPriorRotationNoise_,
-            &errMin, &bestGraph, &profiler_)) {
+            &errMin, &bestGraph, &profiler_, &orderingResult)) {
         // found a good-enough error value
         break;
+      }
+      if (
+        orderingResult.status != UpdateStatus::OK &&
+        initFailureResult.status == UpdateStatus::OK) {
+        initFailureResult = orderingResult;
       }
     }
     profiler_.record("initializeSubgraphs");
@@ -557,11 +578,17 @@ double GraphUpdater::initializeSubgraphs(
         graph_utils::initialize_from(graph, *bestGraph);
       } else {
         LOG_WARN("dropping subgraph with error: " << sgErr << " " << maxErr);
+        result->status = UpdateStatus::SUBGRAPH_ERROR_TOO_LARGE;
       }
       // bestGraph->printErrorMap("BEST SUBGRAPH");
       profiler_.record("initializeFromSubgraphs");
     } else {
       LOG_WARN("could not initialize subgraph!");
+      if (initFailureResult.status != UpdateStatus::OK) {
+        *result = initFailureResult;
+      } else if (result->status == UpdateStatus::OK) {
+        result->status = UpdateStatus::SUBGRAPH_INITIALIZATION_FAILED;
+      }
     }
   }
   return (totalSGError);
@@ -618,16 +645,17 @@ double GraphUpdater::optimize(Graph * graph, double thresh)
   return (error);
 }
 
-bool GraphUpdater::applyFactorsToGraph(
+GraphUpdater::UpdateResult GraphUpdater::applyFactorsToGraph(
   Graph * graph, uint64_t t, const VertexVec & facs, SubGraph * covered)
 {
   std::vector<VertexDeque> sv;
   sv = findSubgraphs(graph, t, facs, covered);
   if (sv.empty()) {
-    return (false);
+    return (UpdateResult{UpdateStatus::NO_SUBGRAPH, -1});
   }
   std::vector<GraphPtr> subGraphs;
-  const double serr = initializeSubgraphs(graph, &subGraphs, sv);
+  UpdateResult result;
+  const double serr = initializeSubgraphs(graph, &subGraphs, sv, &result);
   subgraphError_ += serr;
   const double err = optimize(graph, serr);
   if (err >= 0) {
@@ -640,26 +668,26 @@ bool GraphUpdater::applyFactorsToGraph(
           << ", subgraph sum: " << subgraphError_);
   }
   eraseStoredFactors(t, covered->factors);
-  return (true);
+  return (result);
 }
 
-void GraphUpdater::processNewFactors(
+GraphUpdater::UpdateResult GraphUpdater::processNewFactors(
   Graph * graph, uint64_t t, const VertexVec & facs)
 {
   profiler_.reset("processNewFactors");
   if (facs.empty()) {
     LOG_DEBUG("no new factors received!");
     profiler_.record("processNewFactors");
-    return;
+    return (UpdateResult{UpdateStatus::NO_NEW_FACTORS, -1});
   }
   // "covered" keeps track of what part of the graph has already
   // been operated on during this update cycle
   SubGraph covered;
-  bool oldFactorsActivated = applyFactorsToGraph(graph, t, facs, &covered);
-  if (!oldFactorsActivated) {
+  UpdateResult updateResult = applyFactorsToGraph(graph, t, facs, &covered);
+  if (updateResult.status == UpdateStatus::NO_SUBGRAPH) {
     LOG_DEBUG("no old factors activated!");
     profiler_.record("processNewFactors");
-    return;
+    return (updateResult);
   }
   // The new measurements may have established previously
   // unknown poses (e.g. tag poses), thereby "activating"
@@ -671,12 +699,23 @@ void GraphUpdater::processNewFactors(
     LOG_DEBUG(
       "++++++++ handling " << it->second.size()
                            << " old factors for t = " << oldTime);
-    if (!applyFactorsToGraph(graph, oldTime, it->second, &covered)) {
+    const UpdateResult oldFactorResult =
+      applyFactorsToGraph(graph, oldTime, it->second, &covered);
+    if (oldFactorResult.status == UpdateStatus::NO_SUBGRAPH) {
+      if (updateResult.status == UpdateStatus::OK) {
+        updateResult = oldFactorResult;
+      }
       break;
+    }
+    if (
+      oldFactorResult.status != UpdateStatus::OK &&
+      updateResult.status == UpdateStatus::OK) {
+      updateResult = oldFactorResult;
     }
   }
   LOG_INFO("graph after update: " << graph->getStats());
   profiler_.record("processNewFactors");
+  return (updateResult);
 }
 
 void GraphUpdater::eraseStoredFactors(

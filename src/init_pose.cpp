@@ -415,12 +415,12 @@ static bool find_pose_by_homography(
   return (rc);
 }
 
-std::pair<Transform, bool> pose_from_4(
+Result pose_from_4_with_reason(
   const Eigen::Matrix<double, 4, 2> & imgPoints,
   const Eigen::Matrix<double, 4, 3> & objPoints, const cv::Mat & K,
   DistortionModel distModel, const cv::Mat & D, const Params & params)
 {
-  std::pair<Transform, bool> tf;
+  Result result;
   cv::Mat ip(4, 2, CV_64F);
   cv::Mat wp(4, 3, CV_64F);
   cv::eigen2cv(imgPoints, ip);
@@ -440,19 +440,22 @@ std::pair<Transform, bool> pose_from_4(
   cv2eigen(tvec, tvecT);
   Eigen::Map<const Eigen::Matrix<double, 4, 2, Eigen::RowMajor>> imuE(
     imu.ptr<double>(), imu.rows, 2);
-  tf.first = make_transform(rvecT, tvecT);
-  tf.second = rc;
+  result.pose = make_transform(rvecT, tvecT);
+  result.valid = rc;
+  if (!result.valid) {
+    result.rejectReason = RejectReason::SOLVE_FAILED;
+  }
 #ifdef DEBUG_POSE
   std::cout << "imu: " << cv_info(imu) << std::endl << imu << std::endl;
   std::cout << "ip=np.matrix(" << print_as_python_mat(imuE) << ")" << std::endl;
   std::cout << "wp=np.matrix(" << print_as_python_mat(objPoints) << ")"
             << std::endl;
-  std::cout << "T=np.matrix(" << print_as_python_mat(tf.first.matrix()) << ")"
-            << std::endl;
+  std::cout << "T=np.matrix(" << print_as_python_mat(result.pose.matrix())
+            << ")" << std::endl;
 #endif
   double beta_min(0), beta_max(0), beta_orig(0);
   const double qr = rpp::check_quality(
-    imuE, objPoints, tf.first, &beta_orig, &beta_min, &beta_max);
+    imuE, objPoints, result.pose, &beta_orig, &beta_min, &beta_max);
   constexpr double RAD_2_DEG = 180.0 / M_PI;
   const double view_angle =
     std::abs(beta_orig + ((beta_orig >= 0) ? (-M_PI_2) : M_PI_2));
@@ -466,7 +469,8 @@ std::pair<Transform, bool> pose_from_4(
   }
   if (view_angle * RAD_2_DEG < params.minViewingAngle) {
     LOG_INFO("drop tag with low viewing angle: " << view_angle * RAD_2_DEG);
-    tf.second = false;
+    result.valid = false;
+    result.rejectReason = RejectReason::LOW_VIEWING_ANGLE;
   } else if (
     view_angle < params.ambiguityAngleThreshold &&
     qr > params.maxAmbiguityRatio) {
@@ -475,11 +479,22 @@ std::pair<Transform, bool> pose_from_4(
     LOG_INFO(
       "drop tag at view angle " << view_angle * RAD_2_DEG
                                 << " with risk of flip: " << qr);
-    tf.second = false;
+    result.valid = false;
+    result.rejectReason = RejectReason::AMBIGUITY;
   } else {
     LOG_DEBUG("homography view angle: " << view_angle << " qr: " << qr);
   }
-  return (tf);
+  return (result);
+}
+
+std::pair<Transform, bool> pose_from_4(
+  const Eigen::Matrix<double, 4, 2> & imgPoints,
+  const Eigen::Matrix<double, 4, 3> & objPoints, const cv::Mat & K,
+  DistortionModel distModel, const cv::Mat & D, const Params & params)
+{
+  const auto result =
+    pose_from_4_with_reason(imgPoints, objPoints, K, distModel, D, params);
+  return (std::make_pair(result.pose, result.valid));
 }
 }  // namespace init_pose
 }  // namespace tagslam

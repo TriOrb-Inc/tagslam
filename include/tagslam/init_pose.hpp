@@ -33,7 +33,24 @@ struct Params
   double ambiguityAngleThreshold;
   double maxAmbiguityRatio;
 };
+enum class RejectReason
+{
+  NONE,
+  SOLVE_FAILED,
+  LOW_VIEWING_ANGLE,
+  AMBIGUITY,
+};
+struct Result
+{
+  Transform pose;
+  bool valid{false};
+  RejectReason rejectReason{RejectReason::NONE};
+};
 std::pair<Transform, bool> pose_from_4(
+  const Eigen::Matrix<double, 4, 2> & imgPoints,
+  const Eigen::Matrix<double, 4, 3> & objPoints, const cv::Mat & K,
+  DistortionModel distModel, const cv::Mat & D, const Params & params);
+Result pose_from_4_with_reason(
   const Eigen::Matrix<double, 4, 2> & imgPoints,
   const Eigen::Matrix<double, 4, 3> & objPoints, const cv::Mat & K,
   DistortionModel distModel, const cv::Mat & D, const Params & params);
