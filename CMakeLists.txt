@@ -19,7 +19,8 @@ project(tagslam)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # add_compile_options(-Wall -Wextra -Wpedantic -Werror)
-add_compile_options(-Wall -Wextra -Wpedantic -Wno-class-memaccess)
+# add_compile_options(-Wall -Wextra -Wpedantic -Wno-class-memaccess)
+add_compile_options(-Wall)
 
 # find dependencies
 find_package(ament_cmake REQUIRED)

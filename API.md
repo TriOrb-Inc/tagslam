@@ -47,8 +47,8 @@ ros2 topic echo /tagslam/path/body_robot
 ### 座標推定エラー通知
 - Topic：/tagslam/pose_estimation_error
 - Node：(prefix)_tagslam
-- Type： std_msgs/msg/UInt8
-- Note：タグ未検出のみのフレームは通知対象外。タグ未検出以外で座標推定に失敗した場合にエラーコードを publish
+- Type： std_msgs/msg/UInt8MultiArray
+- Note：タグ未検出のみのフレームではエラーコードは追加しません。タグ未検出以外で座標推定に失敗した場合に、1 frame 分のエラーコードを `data` 配列にまとめて処理の最後に publish。エラーがない場合は空配列を publish します。前回 publish と内容が同じ場合は 10 frame に 1 回 publish
 - Error Code：
 
 | Code | Name | 詳細 | 解消方法 |
@@ -66,8 +66,8 @@ ros2 topic echo /tagslam/path/body_robot
 | 10 | POSE_GRAPH_ERROR_TOO_LARGE | pose graph 最大誤差が `max_subgraph_error` 以上だったため、姿勢推定に失敗しました。 | タグの配置が変わっていないか、tag sizeに誤りがないか、camera intrinsics / extrinsics が適切かどうかを確認してください。`max_subgraph_error` を緩める場合は姿勢推定精度が低くなる場合があります。 |
 
 - 補足：
-  - タグが単に未検出のフレームは通知対象外です。
-  - 複数原因が同時に起きる場合、最初に特定された主原因が publish されます。
+  - タグが単に未検出のフレームでは `data` にエラーコードは入りません。
+  - 複数原因が同時に起きる場合、発生したエラーコードが `data` 配列に追加されます。
 - Usage：
 ```
 ros2 topic echo /tagslam/pose_estimation_error
@@ -77,7 +77,7 @@ ros2 topic echo /tagslam/pose_estimation_error
 - Topic：/tagslam/pose_estimation_warning
 - Node：(prefix)_tagslam
 - Type： triorb_slam_interface/msg/TagSlamWarning
-- Note：座標推定に使えなかったタグ単位の警告を publish。`warning_codes[i]` と `tag_ids[i]` が対応します。
+- Note：座標推定に使えなかったタグ単位の警告です。`warning_codes[i]` と `tag_ids[i]` が対応します。warning がない場合は空配列を publish します。前回 publish と内容が同じ場合は 10 frame に 1 回 publish します。
 - Message：
   - `uint8[] warning_codes`
   - `int32[] tag_ids`
@@ -85,7 +85,7 @@ ros2 topic echo /tagslam/pose_estimation_error
 
 | Code | Name | 詳細 | 解消方法 |
 | --- | --- | --- | --- |
-| 0 | NONE | warning なし。通常 publish されません。 | 対応不要です。 |
+| 0 | NONE | warning code としては通常使用しません。warning がない場合は `warning_codes` / `tag_ids` が空配列の msg を publish します。 | 対応不要です。 |
 | 1 | TAG_FILTERED_BY_HAMMING_DISTANCE | 該当タグの誤り訂正量 `hamming` が `max_hamming_distance` を超えたため、信頼できないタグとして除外されました。 | `tag_ids` のタグについて、画像のブレ、露光、ピント、タグ印刷品質、照明を改善してください。`max_hamming_distance` を変更する場合、誤検出増加に注意してください。 |
 | 2 | TAG_FILTERED_BY_AMNESIA | `amnesia` 有効時に、現在の地図/設定に存在しない未知タグを検出したため除外されました。 | `tag_ids` のタグを地図または設定に登録してください。 |
 | 3 | TAG_FILTERED_BY_BODY_CONFIG | 該当タグが body 設定上利用できません。`ignore_tags` 対象、`default_body` 未設定、default tag size 不正などが原因です。 | `tag_ids` のタグが body の `tags` に定義されているか、`ignore_tags` に含まれていないか、未知タグ利用時は `default_body` と default tag size が正しいか確認してください。 |

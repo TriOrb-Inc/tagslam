@@ -555,6 +555,11 @@ double GraphUpdater::initializeSubgraphs(
             *graph, ordering, ord, poseInitParams_, maxSubgraphError_,
             subGraphAbsPriorPositionNoise_, subGraphAbsPriorRotationNoise_,
             &errMin, &bestGraph, &profiler_, &orderingResult)) {
+        if (
+          orderingResult.status != UpdateStatus::OK &&
+          result->status == UpdateStatus::OK) {
+          *result = orderingResult;
+        }
         // found a good-enough error value
         break;
       }

@@ -35,7 +35,7 @@
 #include <set>
 #include <std_msgs/msg/header.hpp>
 #include <std_msgs/msg/string.hpp>
-#include <std_msgs/msg/u_int8.hpp>
+#include <std_msgs/msg/u_int8_multi_array.hpp>
 #include <std_srvs/srv/trigger.hpp>
 #include <string>
 #include <tagslam/camera.hpp>
@@ -75,7 +75,7 @@ class TagSLAM : public TagFactory, public rclcpp::Node
   using Path = nav_msgs::msg::Path;
   using Header = std_msgs::msg::Header;
   using String = std_msgs::msg::String;
-  using UInt8 = std_msgs::msg::UInt8;
+  using UInt8MultiArray = std_msgs::msg::UInt8MultiArray;
   using TagSlamWarning = triorb_slam_interface::msg::TagSlamWarning;
 
   using ExactSync = flex_sync::ExactSync<TagArray, Odometry>;
@@ -112,22 +112,6 @@ public:
     POSE_ESTIMATION_WARNING_TAG_FILTERED_BY_MINIMUM_AREA = 4,
     POSE_ESTIMATION_WARNING_POSE_INIT_LOW_VIEWING_ANGLE = 5,
     POSE_ESTIMATION_WARNING_POSE_INIT_AMBIGUITY = 6,
-  };
-
-  enum class TagFilterStatus
-  {
-    OK,
-    NONE_SEEN,
-    HAMMING_DISTANCE,
-    AMNESIA,
-    BODY_CONFIG,
-    MINIMUM_AREA,
-  };
-
-  struct TagFilterResult
-  {
-    TagFilterStatus status{TagFilterStatus::OK};
-    int tagId{-1};
   };
 
   explicit TagSLAM(const rclcpp::NodeOptions & options);
@@ -193,14 +177,17 @@ private:
 
   void publishTransforms(uint64_t t, bool orig = false);
   void publishBodyOdom(uint64_t t);
-  TagFilterResult processTags(
+  void processTags(
     uint64_t t, const std::vector<TagArrayConstPtr> & tagMsgs,
-    std::vector<VertexDesc> * factors);
+    std::vector<VertexDesc> * factors, TagSlamWarning * warnings);
   std::vector<TagConstPtr> findTags(const std::vector<Apriltag> & ta);
   bool anyTagsVisible(const std::vector<TagArrayConstPtr> & tagmsgs);
   void publishAll(uint64_t t);
-  void publishPoseEstimationError(PoseEstimationErrorCode code);
-  void publishPoseEstimationWarning(PoseEstimationWarningCode code, int tagId);
+  void appendPoseEstimationError(PoseEstimationErrorCode code);
+  void publishPoseEstimationErrors(const UInt8MultiArray & errors);
+  void appendPoseEstimationWarning(
+    TagSlamWarning * warnings, PoseEstimationWarningCode code, int tagId);
+  void publishPoseEstimationWarning(const TagSlamWarning & warnings);
   void plot(
     const std::shared_ptr<Trigger::Request> req,
     const std::shared_ptr<Trigger::Response> res);
@@ -225,7 +212,7 @@ private:
 
   void remapAndSquash(
     uint64_t t, std::vector<TagArrayConstPtr> * remapped,
-    const std::vector<TagArrayConstPtr> & orig, TagFilterResult * result);
+    const std::vector<TagArrayConstPtr> & orig, TagSlamWarning * warnings);
   void applyDistanceMeasurements();
   void doReplay(double rate);
   void copyPosesAndReset();
@@ -250,8 +237,15 @@ private:
   BodyVec nonstaticBodies_;
   rclcpp::Publisher<Header>::SharedPtr ackPub_;
   rclcpp::Publisher<String>::SharedPtr loadedMapPub_;
-  rclcpp::Publisher<UInt8>::SharedPtr poseEstimationErrorPub_;
+  rclcpp::Publisher<UInt8MultiArray>::SharedPtr poseEstimationErrorPub_;
   rclcpp::Publisher<TagSlamWarning>::SharedPtr poseEstimationWarningPub_;
+  UInt8MultiArray currentPoseEstimationErrors_;
+  UInt8MultiArray lastPoseEstimationErrors_;
+  size_t unchangedPoseEstimationErrorFrameCount_{0};
+  bool hasLastPoseEstimationErrors_{false};
+  TagSlamWarning lastPoseEstimationWarning_;
+  size_t unchangedPoseEstimationWarningFrameCount_{0};
+  bool hasLastPoseEstimationWarning_{false};
   rclcpp::TimerBase::SharedPtr loadedMapTimer_;
   std::vector<rclcpp::Publisher<Odometry>::SharedPtr> odomPub_;
   std::vector<rclcpp::Publisher<Path>::SharedPtr> pathPub_;
