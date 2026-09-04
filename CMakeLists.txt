@@ -45,6 +45,7 @@ set(tagslam_ament_dependencies
   "rosbag2_cpp"
   "rosbag2_transport"
   "sensor_msgs"
+  "std_msgs"
   "tf2_ros"
   "tf2_msgs"
   "tf2"

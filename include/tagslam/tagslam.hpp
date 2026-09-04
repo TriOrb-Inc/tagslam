@@ -33,6 +33,7 @@
 #include <sensor_msgs/msg/image.hpp>
 #include <set>
 #include <std_msgs/msg/header.hpp>
+#include <std_msgs/msg/string.hpp>
 #include <std_srvs/srv/trigger.hpp>
 #include <string>
 #include <tagslam/camera.hpp>
@@ -70,6 +71,7 @@ class TagSLAM : public TagFactory, public rclcpp::Node
   using Point = apriltag_msgs::msg::Point;
   using Path = nav_msgs::msg::Path;
   using Header = std_msgs::msg::Header;
+  using String = std_msgs::msg::String;
 
   using ExactSync = flex_sync::ExactSync<TagArray, Odometry>;
   using ApproxSync = flex_sync::ApproximateSync<TagArray, Odometry>;
@@ -159,6 +161,7 @@ private:
   void dump(
     const std::shared_ptr<Trigger::Request> req,
     const std::shared_ptr<Trigger::Response> res);
+  void publishLoadedMapName();
 
   void doDump(bool optimize);
   void writeCameraPoses(const string & fname);
@@ -197,6 +200,8 @@ private:
   BodyVec bodies_;
   BodyVec nonstaticBodies_;
   rclcpp::Publisher<Header>::SharedPtr ackPub_;
+  rclcpp::Publisher<String>::SharedPtr loadedMapPub_;
+  rclcpp::TimerBase::SharedPtr loadedMapTimer_;
   std::vector<rclcpp::Publisher<Odometry>::SharedPtr> odomPub_;
   std::vector<rclcpp::Publisher<Path>::SharedPtr> pathPub_;
   std::vector<Path> trajectory_;
@@ -213,6 +218,7 @@ private:
   int minTagArea_{0};
   int syncQueueSize_{100};
   double playbackRate_{1.0};
+  double loadedMapPublishPeriodSec_{1.0};
   double pixelNoise_{1.0};
   std::vector<cv::Mat> images_;
   std::vector<OdometryProcessor, Eigen::aligned_allocator<OdometryProcessor>>
@@ -226,6 +232,7 @@ private:
   std::list<uint64_t> times_;
   std::ofstream tagCornerFile_;
   string outBagName_;
+  string loadedMapName_;
   bool writeToBag_{false};
   bool publishInitialTransforms_{false};
   string optimizerMode_;
