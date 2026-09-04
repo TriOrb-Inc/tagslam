@@ -72,7 +72,7 @@ SyncAndDetect::SyncAndDetect(const rclcpp::NodeOptions & opt)
   subscribe(image_topics_, odom_topics_, detector_names_);
 
   loadEnableCameraListOrder(image_topics_);
-  enable_camera_list_sub_ = this->create_subscription<std_msgs::msg::Int8MultiArray>("/run_slam/set/enable_camera", 1,
+  enable_camera_list_sub_ = this->create_subscription<std_msgs::msg::Int8MultiArray>("run_slam/set/enable_camera", 1,
       [this](std_msgs::msg::Int8MultiArray::UniquePtr msg_unique_ptr) {
           if(disable_set_enable_camera_) {
             LOG_WARN("enable camera list is disabled due to config file error. Ignoring set enable camera request.");
@@ -85,7 +85,7 @@ SyncAndDetect::SyncAndDetect(const rclcpp::NodeOptions & opt)
               enable_camera_list_[ enable_camera_list_order_[ii] ] = msg_unique_ptr->data[ii];
           }
       });
-  enable_camera_list_pub_ = this->create_publisher<std_msgs::msg::Int8MultiArray>("/tagslam/enable_camera", 1);
+  enable_camera_list_pub_ = this->create_publisher<std_msgs::msg::Int8MultiArray>("tagslam/enable_camera", 1);
 }
 
 SyncAndDetect::~SyncAndDetect()
@@ -301,7 +301,8 @@ void SyncAndDetect::loadEnableCameraListOrder(const std::vector<std::pair<std::s
   }
   std::vector<std::string> cam_names;
   for (const auto camera : config["Camera"]["cameras"]) {
-    const std::string name = "/" + camera["topic"].as<std::string>();
+    // const std::string name = "/" + camera["topic"].as<std::string>();
+    const std::string name = camera["topic"].as<std::string>();
     cam_names.push_back(name);
   }
 
