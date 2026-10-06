@@ -46,6 +46,7 @@
 #include <tagslam/tag_factory.hpp>
 #include <tf2_msgs/msg/tf_message.hpp>
 #include <unordered_map>
+#include <stdlib.h>
 
 namespace YAML
 {
@@ -234,6 +235,7 @@ private:
   string outBagName_;
   string loadedMapName_;
   bool writeToBag_{false};
+  string framePrefix_;
   bool publishInitialTransforms_{false};
   string optimizerMode_;
   string outDir_;
