@@ -13,6 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <cstdlib>
 #include <algorithm>
 #ifdef USE_CV_BRIDGE_HPP
 #include <cv_bridge/cv_bridge.hpp>
@@ -293,7 +294,8 @@ size_t SyncAndDetect::tagsFromImages(
 
 void SyncAndDetect::loadEnableCameraListOrder(const std::vector<std::pair<std::string, std::string>> & img_topics)
 {
-  const string p = "/params/omni_vslam.yaml";
+  const char * omni_config = std::getenv("TAGSLAM_OMNI_CONFIG");
+  const string p = omni_config && *omni_config ? omni_config : "/params/omni_vslam.yaml";
   YAML::Node config = YAML::LoadFile(p);
   if (config.IsNull()) {
     BOMB_OUT("cannot open config file: " << p);

@@ -100,3 +100,6 @@ ros2 bag play --clock-topics-all my_bag/
 
 This software and any future contributions to it are licensed under
 the [Apache License 2.0](LICENSE).
+
+TriOrb camera selection reads the calibration file specified by `TAGSLAM_OMNI_CONFIG`.
+When unset, the legacy `/params/omni_vslam.yaml` path is used.
