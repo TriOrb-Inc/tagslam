@@ -18,6 +18,7 @@
 
 #include <nav_msgs/msg/odometry.hpp>
 #include <rclcpp/rclcpp.hpp>
+#include <string>
 #include <tagslam/body.hpp>
 #include <tagslam/geometry.hpp>
 #include <tagslam/graph.hpp>
@@ -39,11 +40,18 @@ public:
   static VertexDesc add_body_pose_delta(
     Graph * graph, uint64_t tPrev, uint64_t tCurr, const BodyConstPtr & body,
     const PoseWithNoise & deltaPose);
+  static VertexDesc add_body_ground_constraint(
+    Graph * graph, uint64_t tPrev, uint64_t tCurr, const BodyConstPtr & body);
+  static bool hasGroundConstraint(const BodyConstPtr & body);
   void finalize() const;
 
 private:
   PoseNoiseConstPtr makeAdaptiveNoise(uint64_t t, const Transform & deltaPose);
   void updateStatistics(uint64_t t, const Transform & d);
+  static VertexDesc add_body_pose_delta_with_name(
+    Graph * graph, uint64_t tPrev, uint64_t tCurr, const BodyConstPtr & body,
+    const PoseWithNoise & deltaPose, const std::string & poseName,
+    const std::string & factorName);
   // ---- variables
   BodyConstPtr body_;
   Transform pose_;

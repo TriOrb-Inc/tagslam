@@ -75,3 +75,7 @@ bodies:
      is_static: false
      type: simple
      odom_frame_id: body_rig
+     ground_constraint:
+       height_noise: 0.01
+       roll_noise: 0.174533
+       pitch_noise: 0.174533

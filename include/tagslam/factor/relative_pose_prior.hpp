@@ -30,8 +30,11 @@ public:
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
   RelativePosePrior(
     uint64_t t = 0, uint64_t tm1 = 0, const PoseWithNoise & p = PoseWithNoise(),
-    const string & name = "")
-  : Factor(name, t), prevTime_(tm1), poseWithNoise_(p)
+    const string & name = "", const string & poseName = "")
+  : Factor(name, t),
+    prevTime_(tm1),
+    poseWithNoise_(p),
+    poseName_(poseName)
   {
   }
   // ---------- inherited
@@ -47,10 +50,15 @@ public:
   // ---------- own methods
   uint64_t getPreviousTime() const { return (prevTime_); }
   const PoseWithNoise & getPoseWithNoise() const { return (poseWithNoise_); }
+  const string & getPoseName() const
+  {
+    return (poseName_.empty() ? name_ : poseName_);
+  }
 
 private:
   uint64_t prevTime_;
   PoseWithNoise poseWithNoise_;
+  string poseName_;
 };
 }  // namespace factor
 typedef std::shared_ptr<factor::RelativePosePrior> RelativePosePriorFactorPtr;
